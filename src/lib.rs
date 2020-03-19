@@ -7,7 +7,7 @@ mod typed_tree;
 pub mod user;
 mod utils;
 
-use typed_tree::TypedTree;
+use typed_tree::{KeyOf, KeyVal, TypedTree};
 use user::{BlackListed, BlackListedKey, User};
 
 const SECRET: &'static str = "secret";
@@ -28,6 +28,21 @@ pub struct AuthManager<'a> {
     jwt_header: jwt::Header,
 }
 
+pub enum SignUpError {
+    UserAlreadyCreated,
+}
+
+pub enum AuthorizeError {
+    DifferentIp,
+    InvalidToken,
+    BlackListedToken,
+}
+
+pub enum AuthenticateError {
+    UserDoesNotExists,
+    IncorrectCombination,
+}
+
 impl<'a> AuthManager<'a> {
     pub fn new(user_db: sled::Db, blacklist_db: sled::Db, jwt_validation: jwt::Validation) -> Self {
         let algorithm = jwt_validation.algorithms[0].clone();
@@ -41,7 +56,12 @@ impl<'a> AuthManager<'a> {
         }
     }
 
-    pub async fn authenticate<R>(&self, reply: R, user: User) -> Result<(), &'static str>
+    pub async fn authenticate<R>(
+        &self,
+        reply: R,
+        user: &User,
+        ip: &str,
+    ) -> Result<(), AuthenticateError>
     where
         R: warp::Reply,
     {
@@ -49,42 +69,54 @@ impl<'a> AuthManager<'a> {
         if let Some(pers_user) = pers_user {
             let hashed_pasword = bcrypt::hash(&user.password, bcrypt::DEFAULT_COST).unwrap();
             if bcrypt::verify(&pers_user.password, &hashed_pasword).unwrap() {
-                let claims = Claims {
-                    exp: now_plus_duration(time::Duration::from_secs(12 * 60 * 60)),
-                    user_id: user.id,
-                    ip: "11".to_string(),
-                };
-                let cookie =
-                    jwt::encode(&self.jwt_header, &claims, &self.jwt_encoding_key).unwrap();
-
-                self.set_cookie(reply, &cookie);
+                self.set_cookie(reply, pers_user.id, ip.to_string());
                 Ok(())
             } else {
-                Err("User or email incorrect")
+                Err(AuthenticateError::IncorrectCombination)
             }
         } else {
-            Err("User doesn't exist")
+            Err(AuthenticateError::UserDoesNotExists)
         }
     }
 
-    pub fn authorize(&self, ip: &str, cookie: &str) -> bool {
+    pub fn authorize(&self, ip: &str, cookie: &str) -> Result<(), AuthorizeError> {
         let data = jwt::decode::<Claims>(cookie, &self.jwt_decoding_key, &self.jwt_validation);
         if let Ok(data) = data {
             if data.claims.ip == ip {
-                if !self.is_in_blacklist(cookie) {
-                    true
+                if self.is_in_blacklist(cookie) {
+                    Err(AuthorizeError::BlackListedToken)
                 } else {
-                    false
+                    Ok(())
                 }
             } else {
-                false
+                Err(AuthorizeError::DifferentIp)
             }
         } else {
-            false
+            Err(AuthorizeError::InvalidToken)
         }
     }
 
-    
+    pub async fn signup<R>(&self, reply: R, mut user: User, ip: &str) -> Result<(), SignUpError>
+    where
+        R: warp::Reply,
+    {
+        let hashed_pasword = bcrypt::hash(&user.password, bcrypt::DEFAULT_COST).unwrap();
+        user.password = hashed_pasword;
+        let user_id = user.id.clone();
+        let comp_swap_result = self
+            .user_db
+            .compare_and_swap(&user.key(), None as Option<&[u8]>, Some(user))
+            .unwrap();
+
+        match comp_swap_result {
+            Ok(()) => {
+                self.set_cookie(reply, user_id, ip.to_string());
+                self.user_db.flush_async().await.unwrap();
+                Ok(())
+            }
+            Err(_) => Err(SignUpError::UserAlreadyCreated),
+        }
+    }
 
     pub async fn logout<R>(&self, reply: R, cookie: &str) -> Result<warp::reply::WithHeader<R>, R>
     where
@@ -108,10 +140,17 @@ impl<'a> AuthManager<'a> {
         }
     }
 
-    fn set_cookie<R>(&self, reply: R, cookie: &str) -> warp::reply::WithHeader<R>
+    fn set_cookie<R>(&self, reply: R, user_id: String, ip: String) -> warp::reply::WithHeader<R>
     where
         R: warp::Reply,
     {
+        let claims = Claims {
+            exp: now_plus_duration(time::Duration::from_secs(12 * 60 * 60)),
+            user_id,
+            ip,
+        };
+        let cookie = jwt::encode(&self.jwt_header, &claims, &self.jwt_encoding_key).unwrap();
+
         warp::reply::with_header(
             reply,
             header::SET_COOKIE,
