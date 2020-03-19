@@ -1,0 +1,8 @@
+GET   http://localhost:3030/login
+content-type: application/json
+
+{
+    "side": "Buy",
+    "amount": 100,
+    "limit": 50
+}
