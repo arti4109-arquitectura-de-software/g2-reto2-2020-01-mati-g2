@@ -1,3 +1,6 @@
+use warp::Filter;
+use serde::Deserialize;
+
 const F64_TO_U64_FACTOR: f64 = 10_000.0;
 #[allow(dead_code)]
 pub fn f64_to_u64(price: f64) -> u64 {
@@ -30,6 +33,15 @@ pub fn integer_decode(float: f64) -> (u64, i16, i8) {
     // Exponent bias + mantissa shift
     exponent -= 1023 + 52;
     (mantissa, exponent, sign)
+}
+
+pub fn json_body<T>(kb_limit: u64) -> impl Filter<Extract = (T,), Error = warp::Rejection> + Clone
+where
+    for<'de> T: Deserialize<'de> + Send,
+{
+    // When accepting a body, we want a JSON body
+    // (and to reject huge payloads )...
+    warp::body::content_length_limit(1024 * kb_limit).and(warp::body::json())
 }
 
 #[macro_export]
