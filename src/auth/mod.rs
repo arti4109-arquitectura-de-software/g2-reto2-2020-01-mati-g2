@@ -7,6 +7,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use warp::{http::StatusCode, *};
 
+#[derive(Clone)]
 pub struct AuthRouter<'a> {
     db: sled::Db,
     auth_manager: Arc<AuthManager<'a>>,
@@ -23,28 +24,32 @@ impl<'a> AuthRouter<'a> {
             )),
         }
     }
-    pub fn routes(&self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + '_ {
-        self.login().or(self.signup()).recover(handle_rejection)
+    pub fn routes(self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + 'a {
+        self.clone().login().or(self.signup())
     }
 
-    fn login(&self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + '_ {
+    fn login(self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + 'a {
+      let v = self.clone();
         warp::path!("login")
             .and(warp::post())
             .and(json_body::<User>(4))
             .and_then(async move |user: User| {
+              let c = &self;
                 let reply = warp::reply::json(&"Logged in");
-                self.auth_manager.clone().authenticate(reply, &user, "123")
+                c.clone().auth_manager.authenticate(reply, &user, "123")
             })
     }
 
-    fn signup(&self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + '_ {
+    fn signup(self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + 'a {
+        let v = &self;
         warp::path!("signup")
             .and(warp::post())
             .and(json_body::<User>(4))
-            .and_then(move |mut user: User| {
+            .and_then(|mut user: User| async move  {
+                let c = v.clone();
                 let reply = warp::reply::json(&"Logged in");
                 let reply = warp::reply::with_status(reply, StatusCode::CREATED);
-                self.auth_manager.clone().signup(reply, user, "123")
+                c.auth_manager.clone().signup(reply, user, "123").await
             })
     }
 }
@@ -76,7 +81,7 @@ struct ErrorMessage {
     message: &'static str,
 }
 
-fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
+async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
     let code;
     let message;
     if let Some(err) = err.find::<SignUpError>() {

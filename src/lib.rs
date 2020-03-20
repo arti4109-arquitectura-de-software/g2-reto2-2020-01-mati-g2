@@ -21,8 +21,8 @@ impl<'a> RootRouter<'a> {
         }
     }
     pub fn routes(
-        &self,
-    ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone + '_ {
+        self,
+    ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone + 'a {
         self.auth_router.routes()
     }
 }
