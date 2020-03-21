@@ -1,8 +1,19 @@
-GET   http://localhost:3030/login
+POST   http://localhost:3030/login
 content-type: application/json
 
 {
-    "side": "Buy",
-    "amount": 100,
-    "limit": 50
+    "id": "user2",
+    "password": "user2"
 }
+
+###
+POST    http://localhost:3030/signup
+content-type: application/json
+
+{
+    "id": "user2",
+    "password": "user2"
+}
+
+###
+POST     http://localhost:3030/logout

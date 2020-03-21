@@ -1,24 +1,15 @@
 #![feature(type_alias_impl_trait)]
 #![feature(async_closure)]
 
-use reto2::RootRouter;
+use reto2::{routes, new_ctx, Ctx};
 use serde::{Deserialize, Serialize};
-use std::{convert::Infallible, future::Future, sync::Arc};
 
 #[tokio::main]
 async fn main() {
-    run().await
-}
-
-fn run() -> impl Future<Output = ()> {
     let db = sled::Config::default().temporary(true).open().unwrap(); // sled::open("database.sled")?;
-
-     async move {
-        warp::serve(RootRouter::new(db.clone()).routes()).run(([127, 0, 0, 1], 3030)).await;
-    }
+    let ctx: Ctx = new_ctx(db);
+    warp::serve(routes(ctx)).run(([127, 0, 0, 1], 3030)).await;
 }
-
-type InfallibleR<T> = Result<T, Infallible>;
 
 #[derive(Deserialize, Serialize)]
 enum Side {

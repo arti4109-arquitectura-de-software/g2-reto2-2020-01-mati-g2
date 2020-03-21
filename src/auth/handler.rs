@@ -1,11 +1,11 @@
 use jsonwebtoken::{self as jwt, DecodingKey, EncodingKey};
 use serde::{Deserialize, Serialize};
 use std::time;
-use warp::{http::header, Rejection, Reply, reject};
+use warp::{http::header, Reply};
 
 use crate::auth::{AuthenticateError, AuthorizeError, SignUpError};
-use crate::typed_tree::{KeyOf, KeyVal, TypedTree};
-use crate::user::{BlackListed, BlackListedKey, User};
+use crate::typed_tree::{KeyOf, TypedTree};
+use crate::user::{BlackListed, BlackListedKey, User, UserKey};
 
 const SECRET: &'static str = "secret";
 
@@ -17,21 +17,21 @@ pub struct Claims {
 }
 
 #[derive(Clone)]
-pub struct AuthManager<'a> {
-    user_db: sled::Db,
-    blacklist_db: sled::Db,
+pub struct AuthManager {
+    user_db: sled::Tree,
+    blacklist_db: sled::Tree,
     jwt_encoding_key: EncodingKey,
-    jwt_decoding_key: DecodingKey<'a>,
+    jwt_decoding_key: DecodingKey<'static>,
     jwt_validation: jwt::Validation,
     jwt_header: jwt::Header,
 }
 
-impl<'a> AuthManager<'a> {
-    pub fn new(user_db: sled::Db, blacklist_db: sled::Db, jwt_validation: jwt::Validation) -> Self {
+impl AuthManager {
+    pub fn new(db: sled::Db, jwt_validation: jwt::Validation) -> Self {
         let algorithm = jwt_validation.algorithms[0].clone();
         AuthManager {
-            user_db,
-            blacklist_db,
+            user_db: db.open_tree(<UserKey as KeyOf>::PREFIX).unwrap(),
+            blacklist_db: db.open_tree(<BlackListedKey as KeyOf>::PREFIX).unwrap(),
             jwt_encoding_key: EncodingKey::from_secret(SECRET.as_ref()),
             jwt_decoding_key: DecodingKey::from_secret(SECRET.as_ref()),
             jwt_validation,
@@ -39,27 +39,16 @@ impl<'a> AuthManager<'a> {
         }
     }
 
-    pub fn authenticate<R>(
-        &self,
-        reply: R,
-        user: &User,
-        ip: &str,
-    ) -> Result<impl warp::Reply, Rejection>
-    where
-        R: warp::Reply,
-    {
+    pub fn authenticate(&self, user: &User, ip: &str) -> Result<String, AuthenticateError> {
         let pers_user = self.user_db.get_typed(&user.key()).unwrap();
         if let Some(pers_user) = pers_user {
-            let hashed_pasword = bcrypt::hash(&user.password, bcrypt::DEFAULT_COST).unwrap();
-            if bcrypt::verify(&pers_user.password, &hashed_pasword).unwrap() {
-                Ok(self.set_cookie(reply, pers_user.id, ip.to_string()))
+            if bcrypt::verify(&user.password, &pers_user.password).unwrap() {
+                Ok(self.make_cookie(pers_user.id, ip.to_string()))
             } else {
-                Err(warp::reject::custom(
-                    AuthenticateError::IncorrectCombination,
-                ))
+                Err(AuthenticateError::IncorrectCombination)
             }
         } else {
-            Err(warp::reject::custom(AuthenticateError::UserDoesNotExist))
+            Err(AuthenticateError::UserDoesNotExist)
         }
     }
 
@@ -85,28 +74,43 @@ impl<'a> AuthManager<'a> {
         reply: R,
         mut user: User,
         ip: &str,
-    ) -> Result<impl warp::Reply, Rejection>
+    ) -> Result<impl warp::Reply, SignUpError>
     where
         R: warp::Reply,
     {
-        let hashed_pasword = bcrypt::hash(&user.password, bcrypt::DEFAULT_COST).unwrap();
+        let mut start = time::Instant::now();
+        let hashed_pasword = bcrypt::hash(&user.password, 9).unwrap();
+        println!("bcrypt: {:?}", time::Instant::now().duration_since(start));
+
         user.password = hashed_pasword;
         let user_id = user.id.clone();
+
+        start = time::Instant::now();
         let comp_swap_result = self
             .user_db
-            .compare_and_swap(&user.key(), None as Option<&[u8]>, Some(user))
+            .compare_and_swap(
+                &UserKey(user_id.as_str()),
+                None as Option<&[u8]>,
+                Some(user),
+            )
             .unwrap();
+        println!(
+            "comp_and_swap: {:?}",
+            time::Instant::now().duration_since(start)
+        );
 
         match comp_swap_result {
             Ok(()) => {
+                start = time::Instant::now();
                 self.user_db.flush_async().await.unwrap();
+                println!("flush: {:?}", time::Instant::now().duration_since(start));
                 Ok(self.set_cookie(reply, user_id, ip.to_string()))
             }
-            Err(_) => Err(reject::custom(SignUpError::UserAlreadyCreated)),
+            Err(_) => Err(SignUpError::UserAlreadyCreated),
         }
     }
 
-    pub async fn logout<R>(&self, reply: R, cookie: &str) -> Result<warp::reply::WithHeader<R>, R>
+    pub async fn logout<R>(&self, reply: R, cookie: &str) -> warp::reply::WithHeader<R>
     where
         R: Reply,
     {
@@ -118,9 +122,9 @@ impl<'a> AuthManager<'a> {
             };
             self.blacklist_db.insert_typed(&key, value).unwrap();
             self.blacklist_db.flush_async().await.unwrap();
-            Ok(self.remove_cookie(reply))
+            self.remove_cookie(reply)
         } else {
-            Err(reply)
+            self.remove_cookie(reply)
         }
     }
 
@@ -132,6 +136,22 @@ impl<'a> AuthManager<'a> {
             reply,
             header::SET_COOKIE,
             format!("JWT=; Max-Age=0; SameSite=Lax; HttpOnly"),
+        )
+    }
+
+    fn make_cookie(&self, user_id: String, ip: String) -> String {
+        let max_age_secs = 12 * 60 * 60;
+        let claims = Claims {
+            exp: now_plus_duration(time::Duration::from_secs(max_age_secs)),
+            user_id,
+            ip,
+        };
+        let cookie = jwt::encode(&self.jwt_header, &claims, &self.jwt_encoding_key).unwrap();
+
+        format!(
+            "JWT={}; Max-Age={}; SameSite=Lax; HttpOnly",
+            cookie,
+            max_age_secs * 1000
         )
     }
 

@@ -1,29 +1,38 @@
 #![feature(async_closure)]
 
-mod auth;
+pub mod auth;
 mod typed_tree;
 pub mod user;
 mod utils;
 
-use auth::AuthRouter;
-use warp::Filter;
+use auth::AuthManager;
+use std::sync::Arc;
+use warp::{Filter, Reply, Rejection};
 
-pub struct RootRouter<'a> {
-    db: sled::Db,
-    auth_router: AuthRouter<'a>,
+pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    auth::routes(ctx)
 }
 
-impl<'a> RootRouter<'a> {
+pub type Ctx = Arc<CtxData>;
+
+pub fn with_ctx(
+    ctx: Ctx,
+) -> impl Filter<Extract = (Ctx,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || ctx.clone())
+}
+
+pub fn new_ctx(db: sled::Db) -> Ctx {
+    Arc::new(CtxData::new(db))
+}
+pub struct CtxData {
+    auth_manager: AuthManager,
+}
+
+impl CtxData {
     pub fn new(db: sled::Db) -> Self {
-        RootRouter {
-            db: db.clone(),
-            auth_router: AuthRouter::new(db),
+        CtxData {
+            auth_manager: AuthManager::new(db, jsonwebtoken::Validation::default()),
         }
-    }
-    pub fn routes(
-        self,
-    ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone + 'a {
-        self.auth_router.routes()
     }
 }
 

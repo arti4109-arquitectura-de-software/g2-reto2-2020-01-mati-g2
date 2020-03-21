@@ -1,64 +1,118 @@
 mod handler;
 
-use crate::{user::User, utils::json_body};
-use handler::AuthManager;
-use serde::{Deserialize, Serialize};
+use crate::{user::User, utils::json_body, with_ctx, Ctx};
+pub use handler::AuthManager;
+use serde::Serialize;
 use std::convert::Infallible;
 use std::sync::Arc;
-use warp::{http::StatusCode, *};
+use warp::{
+    http::{header,StatusCode},
+    *,
+};
 
 #[derive(Clone)]
-pub struct AuthRouter<'a> {
+pub struct AuthRouter {
     db: sled::Db,
-    auth_manager: Arc<AuthManager<'a>>,
+    auth_manager: Arc<AuthManager>,
 }
 
-impl<'a> AuthRouter<'a> {
-    pub fn new(db: sled::Db) -> Self {
-        AuthRouter {
-            db: db.clone(),
-            auth_manager: Arc::new(AuthManager::new(
-                db.clone(),
-                db,
-                jsonwebtoken::Validation::default(),
-            )),
-        }
-    }
-    pub fn routes(self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + 'a {
-        self.clone().login().or(self.signup())
-    }
+pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    login(ctx.clone()).or(signup(ctx.clone())).or(logout(ctx))
+}
 
-    fn login(self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + 'a {
-      let v = self.clone();
-        warp::path!("login")
-            .and(warp::post())
-            .and(json_body::<User>(4))
-            .and_then(async move |user: User| {
-              let c = &self;
-                let reply = warp::reply::json(&"Logged in");
-                c.clone().auth_manager.authenticate(reply, &user, "123")
-            })
-    }
+fn login(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path!("login")
+        .and(warp::post())
+        .and(json_body::<User>(4))
+        .and(with_ctx(ctx))
+        .and_then(async move |user: User, ctx: Ctx| -> Result<_, Infallible> {
+            let json: reply::Json;
+            let code;
+            let cookie: Option<String>;
+            match ctx.auth_manager.authenticate(&user, "123") {
+                Ok(_cookie) => {
+                    // warp::http::Response::builder()
+                    //     .header(header::SET_COOKIE, cookie)
+                    //     .status(StatusCode::OK)
+                    //     .body(reply)
+                    //     .unwrap()
+                    code = StatusCode::OK;
+                    json = warp::reply::json(&"Logged in");
+                    cookie = Some(_cookie);
+                }
+                Err(auth_err) => {
+                    code = StatusCode::UNAUTHORIZED;
+                    let message = match auth_err {
+                        AuthenticateError::UserDoesNotExist => "User id doesn't exist",
+                        AuthenticateError::IncorrectCombination => "Incorrect combination",
+                    };
+                    let err = ErrorMessage {
+                        code: code.as_u16(),
+                        message,
+                    };
+                    json = warp::reply::json(&err);
+                    cookie = None;
+                }
+            };
+            let cookie_ref = cookie.as_ref().map_or("JWT=; Max-Age=0;", |s| s.as_str());
 
-    fn signup(self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone + 'a {
-        let v = &self;
-        warp::path!("signup")
-            .and(warp::post())
-            .and(json_body::<User>(4))
-            .and_then(|mut user: User| async move  {
-                let c = v.clone();
+            let r = reply::with_status(json, code);
+            Ok(reply::with_header(r, header::SET_COOKIE, cookie_ref))
+        })
+}
+
+fn logout(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path!("logout")
+        .and(warp::post())
+        .and(warp::cookie("JWT"))
+        .and(with_ctx(ctx))
+        .and_then(
+            async move |cookie: String,
+                        ctx: Ctx|
+                        -> Result<warp::reply::WithHeader<_>, Infallible> {
+                let reply = warp::reply::json(&"Logged out");
+                Ok(ctx.auth_manager.logout(reply, &cookie).await)
+            },
+        )
+}
+
+fn signup(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path!("signup")
+        .and(warp::post())
+        .and(json_body::<User>(4))
+        .and(with_ctx(ctx))
+        .and_then(
+            async move |user: User, ctx: Ctx| -> Result<Box<dyn Reply>, Infallible> {
                 let reply = warp::reply::json(&"Logged in");
                 let reply = warp::reply::with_status(reply, StatusCode::CREATED);
-                c.auth_manager.clone().signup(reply, user, "123").await
-            })
-    }
+
+                Ok(match ctx.auth_manager.signup(reply, user, "123").await {
+                    Ok(reply) => Box::new(reply),
+                    Err(err) => {
+                        let code = StatusCode::EXPECTATION_FAILED;
+                        let message = match err {
+                            SignUpError::UserAlreadyCreated => "User taken",
+                        };
+                        Box::new(reply_error(code, message))
+                    }
+                })
+            },
+        )
+}
+
+fn reply_error(code: StatusCode, message: &'static str) -> reply::WithStatus<reply::Json> {
+    let err = ErrorMessage {
+        code: code.as_u16(),
+        message,
+    };
+    let json = warp::reply::json(&err);
+    warp::reply::with_status(json, code)
 }
 
 #[derive(Debug)]
 pub enum SignUpError {
     UserAlreadyCreated,
 }
-impl reject::Reject for SignUpError {}
 
 #[derive(Debug)]
 pub enum AuthorizeError {
@@ -66,14 +120,12 @@ pub enum AuthorizeError {
     InvalidToken,
     BlackListedToken,
 }
-impl reject::Reject for AuthorizeError {}
 
 #[derive(Debug)]
 pub enum AuthenticateError {
     UserDoesNotExist,
     IncorrectCombination,
 }
-impl reject::Reject for AuthenticateError {}
 
 #[derive(Serialize)]
 struct ErrorMessage {
@@ -81,34 +133,34 @@ struct ErrorMessage {
     message: &'static str,
 }
 
-async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
-    let code;
-    let message;
-    if let Some(err) = err.find::<SignUpError>() {
-        code = StatusCode::EXPECTATION_FAILED;
-        message = "User taken";
-    } else if let Some(err) = err.find::<AuthorizeError>() {
-        code = StatusCode::UNAUTHORIZED;
-        message = match err {
-            AuthorizeError::DifferentIp => "Changed IP",
-            _ => "Invalid Token",
-        }
-    } else if let Some(err) = err.find::<AuthenticateError>() {
-        code = StatusCode::UNAUTHORIZED;
-        message = match err {
-            AuthenticateError::UserDoesNotExist => "User Id Doesn't exist",
-            AuthenticateError::IncorrectCombination => "Incorrect Combination",
-        }
-    } else {
-        // We should have expected this... Just log and say its a 500
-        eprintln!("unhandled rejection: {:?}", err);
-        code = StatusCode::INTERNAL_SERVER_ERROR;
-        message = "";
-    }
+// async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
+//     let code;
+//     let message: &'static str;
+//     if let Some(err) = err.find::<SignUpError>() {
+//         code = StatusCode::EXPECTATION_FAILED;
+//         message = "User taken";
+//     } else if let Some(err) = err.find::<AuthorizeError>() {
+//         code = StatusCode::UNAUTHORIZED;
+//         message = match err {
+//             AuthorizeError::DifferentIp => "Changed IP",
+//             _ => "Invalid Token",
+//         };
+//     } else if let Some(err) = err.find::<AuthenticateError>() {
+//         code = StatusCode::UNAUTHORIZED;
+//         message = match err {
+//             AuthenticateError::UserDoesNotExist => "User Id Doesn't exist",
+//             AuthenticateError::IncorrectCombination => "Incorrect Combination",
+//         };
+//     } else {
+//         // We should have expected this... Just log and say its a 500
+//         eprintln!("unhandled rejection: {:?}", err);
+//         code = StatusCode::INTERNAL_SERVER_ERROR;
+//         message = "";
+//     }
 
-    let json = warp::reply::json(&ErrorMessage {
-        code: code.as_u16(),
-        message: message.into(),
-    });
-    Ok(warp::reply::with_status(json, code))
-}
+//     let json = warp::reply::json(&ErrorMessage {
+//         code: code.as_u16(),
+//         message,
+//     });
+//     Ok(warp::reply::with_status(json, code))
+// }
