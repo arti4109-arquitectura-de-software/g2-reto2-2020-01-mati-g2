@@ -1,20 +1,16 @@
 mod handler;
 
-use crate::{user::User, utils::json_body, with_ctx, Ctx};
+use crate::{user::User, utils::json_body, with_ctx, Ctx, IpQueryParam};
 pub use handler::AuthManager;
 use serde::Serialize;
 use std::convert::Infallible;
-use std::sync::Arc;
 use warp::{
-    http::{header,StatusCode},
-    *,
+    http::{header, StatusCode},
+    reply, Filter, Rejection, Reply,
 };
 
-#[derive(Clone)]
-pub struct AuthRouter {
-    db: sled::Db,
-    auth_manager: Arc<AuthManager>,
-}
+pub const JWT_COOKIE_NAME: &'static str = "JWT";
+pub const DELETE_JWT_COOKIE: &'static str = "JWT=; Max-Age=0;";
 
 pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     login(ctx.clone()).or(signup(ctx.clone())).or(logout(ctx))
@@ -24,47 +20,50 @@ fn login(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clo
     warp::path!("login")
         .and(warp::post())
         .and(json_body::<User>(4))
+        .and(warp::query::<IpQueryParam>())
         .and(with_ctx(ctx))
-        .and_then(async move |user: User, ctx: Ctx| -> Result<_, Infallible> {
-            let json: reply::Json;
-            let code;
-            let cookie: Option<String>;
-            match ctx.auth_manager.authenticate(&user, "123") {
-                Ok(_cookie) => {
-                    // warp::http::Response::builder()
-                    //     .header(header::SET_COOKIE, cookie)
-                    //     .status(StatusCode::OK)
-                    //     .body(reply)
-                    //     .unwrap()
-                    code = StatusCode::OK;
-                    json = warp::reply::json(&"Logged in");
-                    cookie = Some(_cookie);
-                }
-                Err(auth_err) => {
-                    code = StatusCode::UNAUTHORIZED;
-                    let message = match auth_err {
-                        AuthenticateError::UserDoesNotExist => "User id doesn't exist",
-                        AuthenticateError::IncorrectCombination => "Incorrect combination",
-                    };
-                    let err = ErrorMessage {
-                        code: code.as_u16(),
-                        message,
-                    };
-                    json = warp::reply::json(&err);
-                    cookie = None;
-                }
-            };
-            let cookie_ref = cookie.as_ref().map_or("JWT=; Max-Age=0;", |s| s.as_str());
+        .and_then(
+            async move |user: User, ip: IpQueryParam, ctx: Ctx| -> Result<_, Infallible> {
+                let json: reply::Json;
+                let code;
+                let cookie: Option<String>;
+                match ctx.auth_manager.authenticate(&user, ip.ip.as_str()) {
+                    Ok(_cookie) => {
+                        // warp::http::Response::builder()
+                        //     .header(header::SET_COOKIE, cookie)
+                        //     .status(StatusCode::OK)
+                        //     .body(reply)
+                        //     .unwrap()
+                        code = StatusCode::OK;
+                        json = warp::reply::json(&"Logged in");
+                        cookie = Some(_cookie);
+                    }
+                    Err(auth_err) => {
+                        code = StatusCode::UNAUTHORIZED;
+                        let message = match auth_err {
+                            AuthenticateError::UserDoesNotExist => "User id doesn't exist",
+                            AuthenticateError::IncorrectCombination => "Incorrect combination",
+                        };
+                        let err = ErrorMessage {
+                            code: code.as_u16(),
+                            message,
+                        };
+                        json = warp::reply::json(&err);
+                        cookie = None;
+                    }
+                };
+                let cookie_ref = cookie.as_ref().map_or(DELETE_JWT_COOKIE, |s| s.as_str());
 
-            let r = reply::with_status(json, code);
-            Ok(reply::with_header(r, header::SET_COOKIE, cookie_ref))
-        })
+                let r = reply::with_status(json, code);
+                Ok(reply::with_header(r, header::SET_COOKIE, cookie_ref))
+            },
+        )
 }
 
 fn logout(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     warp::path!("logout")
         .and(warp::post())
-        .and(warp::cookie("JWT"))
+        .and(warp::cookie(JWT_COOKIE_NAME))
         .and(with_ctx(ctx))
         .and_then(
             async move |cookie: String,
@@ -80,22 +79,28 @@ fn signup(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Cl
     warp::path!("signup")
         .and(warp::post())
         .and(json_body::<User>(4))
+        .and(warp::query::<IpQueryParam>())
         .and(with_ctx(ctx))
         .and_then(
-            async move |user: User, ctx: Ctx| -> Result<Box<dyn Reply>, Infallible> {
-                let reply = warp::reply::json(&"Logged in");
+            async move |user: User,
+                        ip: IpQueryParam,
+                        ctx: Ctx|
+                        -> Result<Box<dyn Reply>, Infallible> {
+                let reply = warp::reply::json(&"Signed up");
                 let reply = warp::reply::with_status(reply, StatusCode::CREATED);
 
-                Ok(match ctx.auth_manager.signup(reply, user, "123").await {
-                    Ok(reply) => Box::new(reply),
-                    Err(err) => {
-                        let code = StatusCode::EXPECTATION_FAILED;
-                        let message = match err {
-                            SignUpError::UserAlreadyCreated => "User taken",
-                        };
-                        Box::new(reply_error(code, message))
-                    }
-                })
+                Ok(
+                    match ctx.auth_manager.signup(reply, user, ip.ip.as_str()).await {
+                        Ok(reply) => Box::new(reply),
+                        Err(err) => {
+                            let code = StatusCode::EXPECTATION_FAILED;
+                            let message = match err {
+                                SignUpError::UserAlreadyCreated => "User taken",
+                            };
+                            Box::new(reply_error(code, message))
+                        }
+                    },
+                )
             },
         )
 }
@@ -133,6 +138,11 @@ struct ErrorMessage {
     message: &'static str,
 }
 
+// #[derive(Clone)]
+// pub struct AuthRouter {
+//     db: sled::Db,
+//     auth_manager: Arc<AuthManager>,
+// }
 // async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
 //     let code;
 //     let message: &'static str;

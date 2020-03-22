@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::time;
 use warp::{http::header, Reply};
 
-use crate::auth::{AuthenticateError, AuthorizeError, SignUpError};
+use crate::auth::{
+    AuthenticateError, AuthorizeError, SignUpError, DELETE_JWT_COOKIE, JWT_COOKIE_NAME,
+};
+use crate::prelude::*;
 use crate::typed_tree::{KeyOf, TypedTree};
 use crate::user::{BlackListed, BlackListedKey, User, UserKey};
 
@@ -16,7 +19,6 @@ pub struct Claims {
     ip: String,
 }
 
-#[derive(Clone)]
 pub struct AuthManager {
     user_db: sled::Tree,
     blacklist_db: sled::Tree,
@@ -24,18 +26,31 @@ pub struct AuthManager {
     jwt_decoding_key: DecodingKey<'static>,
     jwt_validation: jwt::Validation,
     jwt_header: jwt::Header,
+    _blacklist_interval_handle: tokio::task::JoinHandle<()>,
 }
 
 impl AuthManager {
     pub fn new(db: sled::Db, jwt_validation: jwt::Validation) -> Self {
         let algorithm = jwt_validation.algorithms[0].clone();
+        let blacklist_db = db.open_tree(<BlackListedKey as KeyOf>::PREFIX).unwrap();
+
+        let mut interval = tokio::time::interval(time::Duration::new(60 * 5, 0));
+        let interval_db = blacklist_db.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                interval.tick().await;
+                clear_blacklist(&interval_db).await;
+            }
+        });
+
         AuthManager {
             user_db: db.open_tree(<UserKey as KeyOf>::PREFIX).unwrap(),
-            blacklist_db: db.open_tree(<BlackListedKey as KeyOf>::PREFIX).unwrap(),
+            blacklist_db: blacklist_db.clone(),
             jwt_encoding_key: EncodingKey::from_secret(SECRET.as_ref()),
             jwt_decoding_key: DecodingKey::from_secret(SECRET.as_ref()),
             jwt_validation,
             jwt_header: jwt::Header::new(algorithm),
+            _blacklist_interval_handle: handle,
         }
     }
 
@@ -80,7 +95,7 @@ impl AuthManager {
     {
         let mut start = time::Instant::now();
         let hashed_pasword = bcrypt::hash(&user.password, 9).unwrap();
-        println!("bcrypt: {:?}", time::Instant::now().duration_since(start));
+        println!("bcrypt: {:?}", start.elapsed());
 
         user.password = hashed_pasword;
         let user_id = user.id.clone();
@@ -94,16 +109,13 @@ impl AuthManager {
                 Some(user),
             )
             .unwrap();
-        println!(
-            "comp_and_swap: {:?}",
-            time::Instant::now().duration_since(start)
-        );
+        println!("comp_and_swap: {:?}", start.elapsed());
 
         match comp_swap_result {
             Ok(()) => {
                 start = time::Instant::now();
                 self.user_db.flush_async().await.unwrap();
-                println!("flush: {:?}", time::Instant::now().duration_since(start));
+                println!("flush: {:?}", start.elapsed());
                 Ok(self.set_cookie(reply, user_id, ip.to_string()))
             }
             Err(_) => Err(SignUpError::UserAlreadyCreated),
@@ -132,15 +144,11 @@ impl AuthManager {
     where
         R: warp::Reply,
     {
-        warp::reply::with_header(
-            reply,
-            header::SET_COOKIE,
-            format!("JWT=; Max-Age=0; SameSite=Lax; HttpOnly"),
-        )
+        warp::reply::with_header(reply, header::SET_COOKIE, DELETE_JWT_COOKIE)
     }
 
     fn make_cookie(&self, user_id: String, ip: String) -> String {
-        let max_age_secs = 12 * 60 * 60;
+        let max_age_secs = 12 * 60 * 60; // 12 hours
         let claims = Claims {
             exp: now_plus_duration(time::Duration::from_secs(max_age_secs)),
             user_id,
@@ -149,7 +157,8 @@ impl AuthManager {
         let cookie = jwt::encode(&self.jwt_header, &claims, &self.jwt_encoding_key).unwrap();
 
         format!(
-            "JWT={}; Max-Age={}; SameSite=Lax; HttpOnly",
+            "{}={}; Max-Age={}; SameSite=Lax; HttpOnly",
+            JWT_COOKIE_NAME,
             cookie,
             max_age_secs * 1000
         )
@@ -159,23 +168,9 @@ impl AuthManager {
     where
         R: warp::Reply,
     {
-        let max_age_secs = 12 * 60 * 60;
-        let claims = Claims {
-            exp: now_plus_duration(time::Duration::from_secs(max_age_secs)),
-            user_id,
-            ip,
-        };
-        let cookie = jwt::encode(&self.jwt_header, &claims, &self.jwt_encoding_key).unwrap();
+        let cookie = self.make_cookie(user_id, ip);
 
-        warp::reply::with_header(
-            reply,
-            header::SET_COOKIE,
-            format!(
-                "JWT={}; Max-Age={}; SameSite=Lax; HttpOnly",
-                cookie,
-                max_age_secs * 1000
-            ),
-        )
+        warp::reply::with_header(reply, header::SET_COOKIE, cookie)
     }
 
     fn is_in_blacklist(&self, cookie: &str) -> bool {
@@ -204,4 +199,20 @@ fn now_plus_duration(duration: time::Duration) -> u64 {
         .duration_since(time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_secs()
+}
+
+async fn clear_blacklist(blacklist_db: &sled::Tree) {
+    let now = now_in_secs();
+    let mut batch = sled::Batch::default();
+    let mut count = 0;
+    blacklist_db.iter().for_each(|res| {
+        let (key, v) = res.unwrap();
+        let v: BlackListed = bincode_des!(v.as_ref()).unwrap();
+        if now > v.exp {
+            count += 1;
+            batch.remove(key);
+        }
+    });
+    println!("blacklist: {} deleted", count);
+    blacklist_db.apply_batch(batch).unwrap()
 }

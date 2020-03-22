@@ -1,4 +1,4 @@
-POST   http://localhost:3030/login
+POST   http://localhost:3030/login?ip="dwd"
 content-type: application/json
 
 {
@@ -7,7 +7,7 @@ content-type: application/json
 }
 
 ###
-POST    http://localhost:3030/signup
+POST    http://localhost:3030/signup?ip="dwd"
 content-type: application/json
 
 {
@@ -17,3 +17,24 @@ content-type: application/json
 
 ###
 POST     http://localhost:3030/logout
+
+###
+POST     http://localhost:3030/offers?ip="dwd"
+content-type: application/json
+
+{
+    "Add": {
+        "security": "BTC",
+        "side": "Buy",
+        "amount": 100,
+        "price": 10
+    }
+}
+
+###
+POST     http://localhost:3030/offers?ip="dwdd"
+content-type: application/json
+
+{
+    "Delete": 767
+}

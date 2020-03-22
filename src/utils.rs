@@ -59,7 +59,7 @@ macro_rules! bincode_des {
 
 #[macro_export]
 macro_rules! derive_simple_struct {
-    ($name: ty, $type: ty) => {
+    ($name: ident, $type: ty) => {
         impl std::convert::AsRef<$type> for $name {
             fn as_ref(&self) -> &$type {
                 &self.0
