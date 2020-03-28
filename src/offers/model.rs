@@ -5,7 +5,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, Hash)]
-pub struct OfferEventKey([u8; 8]);
+pub struct OfferEventKey(pub [u8; 8]);
 derive_monotonic_key!(OfferEventKey);
 
 #[derive(Deserialize)]
@@ -23,7 +23,7 @@ impl From<OfferEventRequest> for OfferEvent {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum OfferEvent {
     Delete(OfferEventKey),
     Add(OfferValue),
@@ -32,10 +32,46 @@ pub enum OfferEvent {
 #[derive(Deserialize, Serialize, Debug)]
 pub enum OfferEventKeyed {
     Delete(OfferEventKey, OfferEventKey),
-    Add(OfferEventKey, OfferValue),
+    Add(Offer),
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+impl PartialEq for OfferEventKeyed {
+    fn eq(&self, other: &Self) -> bool {
+        self.key() == other.key()
+    }
+}
+
+impl OfferEventKeyed {
+    pub fn from_event(key: OfferEventKey, event: OfferEvent) -> Self {
+        match event {
+            OfferEvent::Add(value) => Self::Add(Offer { key, value }),
+            OfferEvent::Delete(k) => Self::Delete(key, k),
+        }
+    }
+    pub fn key(&self) -> &OfferEventKey {
+        match self {
+            OfferEventKeyed::Add(o) => &o.key,
+            OfferEventKeyed::Delete(k, _) => k,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Offer {
+    pub key: OfferEventKey,
+    pub value: OfferValue,
+}
+
+impl Offer {
+    pub fn opposite_side(&self) -> Side {
+        match self.value.side {
+            Side::Sell => Side::Buy,
+            Side::Buy => Side::Sell,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct OfferValue {
     pub security: Security,
     pub side: Side,

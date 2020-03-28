@@ -1,16 +1,19 @@
 #![feature(async_closure)]
+#![feature(vec_remove_item)]
 
 pub mod auth;
+mod engine;
+mod matches;
 mod offers;
 mod typed_tree;
 pub mod user;
 mod utils;
-mod consensus;
 
 use auth::AuthManager;
-use warp::{Filter, Rejection, Reply};
+use offers::OfferHandler;
 use serde::Deserialize;
 use std::sync::Arc;
+use warp::{Filter, Rejection, Reply};
 
 pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     auth::routes(ctx.clone()).or(offers::routes(ctx))
@@ -26,16 +29,17 @@ pub fn with_ctx(
 
 pub struct CtxData {
     auth_manager: AuthManager,
+    offer_handler: OfferHandler,
 }
 
 impl CtxData {
     pub fn new(db: sled::Db) -> Self {
         CtxData {
-            auth_manager: AuthManager::new(db, jsonwebtoken::Validation::default()),
+            auth_manager: AuthManager::new(db.clone(), jsonwebtoken::Validation::default()),
+            offer_handler: OfferHandler::new(db),
         }
     }
 }
-
 
 #[derive(Deserialize)]
 pub struct IpQueryParam {
@@ -45,12 +49,13 @@ pub struct IpQueryParam {
 pub mod prelude {
     pub use super::{
         bincode_des, bincode_ser, derive_key_of, derive_monotonic_key, derive_simple_struct,
-        typed_tree::KeyOf, with_ctx, Ctx,
+        typed_tree::{KeyOf, MonotonicTypedTree, TypedTree},
+        with_ctx, Ctx,
     };
 }
 
 #[cfg(test)]
-mod tests { 
+mod tests {
     #[test]
     fn it_works() {
         assert_eq!(2 + 2, 4);

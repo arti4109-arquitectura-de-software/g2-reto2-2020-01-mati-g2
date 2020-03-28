@@ -34,7 +34,7 @@ impl AuthManager {
         let algorithm = jwt_validation.algorithms[0].clone();
         let blacklist_db = db.open_tree(<BlackListedKey as KeyOf>::PREFIX).unwrap();
 
-        let mut interval = tokio::time::interval(time::Duration::new(60 * 5, 0));
+        let mut interval = tokio::time::interval(time::Duration::new(60 * 5, 0)); // 5 min
         let interval_db = blacklist_db.clone();
         let handle = tokio::spawn(async move {
             loop {

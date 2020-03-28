@@ -44,10 +44,10 @@ where
     IVec: From<ValOf<K>>,
 {
     // fn insert_monotonic(&self, value: ValOf<K>) -> sled::Result<(K, Option<IVec>)>;
-    fn get_max_key(&mut self) -> sled::Result<Arc<AtomicU64>>;
+    fn get_max_key(&mut self) -> sled::Result<u64>;
     fn insert_monotonic_atomic(
         &self,
-        atomic: &Arc<AtomicU64>,
+        atomic: &AtomicU64,
         value: ValOf<K>,
     ) -> sled::Result<(K, Option<IVec>)> {
         let key = K::from(atomic.fetch_add(1, Ordering::SeqCst));
@@ -74,7 +74,7 @@ where
     //     let key = K::from(self.generate_id()?);
     //     self.insert(&key, value).and_then(|v| Ok((key, v)))
     // }
-    fn get_max_key(&mut self) -> sled::Result<Arc<AtomicU64>> {
+    fn get_max_key(&mut self) -> sled::Result<u64> {
         if let Some((k, v)) = self.pop_max()? {
             let count = {
                 let mut b = k.as_ref();
@@ -86,9 +86,9 @@ where
             };
             self.insert(k.clone(), <ValOf<K>>::try_from(v).map_err(|e| e.into())?)?;
 
-            Ok(Arc::new(AtomicU64::new(count + 1)))
+            Ok(count + 1)
         } else {
-            Ok(Arc::new(AtomicU64::new(1)))
+            Ok(1)
         }
     }
 }

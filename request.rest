@@ -26,15 +26,28 @@ content-type: application/json
     "Add": {
         "security": "BTC",
         "side": "Buy",
-        "amount": 100,
-        "price": 10
+        "amount": 8,
+        "price": 5
     }
 }
 
 ###
-POST     http://localhost:3030/offers?ip="dwdd"
+POST     http://localhost:3030/offers?ip="dwd"
 content-type: application/json
 
 {
-    "Delete": 767
+    "Add": {
+        "security": "BTC",
+        "side": "Sell",
+        "amount": 6,
+        "price": 4
+    }
+}
+
+###
+POST     http://localhost:3030/offers?ip="dwd"
+content-type: application/json
+
+{
+    "Delete": 1
 }
