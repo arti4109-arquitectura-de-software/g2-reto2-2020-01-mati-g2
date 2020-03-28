@@ -1,8 +1,8 @@
-use crate::engine::{Engine, KeyedBinaryHeapEngine, Matches};
-use crate::matches::{MatchKey, MatchPersistor};
+use crate::engine::{Engine, KeyedBinaryHeapEngine, Matches, MatchResult};
+use crate::matches::{MatchKey, MatchPersistor, };
 use crate::offers::{OfferEvent, OfferEventKeyed};
 use crate::prelude::*;
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::sync::atomic::AtomicU64;
 use std::thread;
 
@@ -10,17 +10,20 @@ pub struct OfferHandler {
     offers_db: sled::Tree,
     offer_counter: AtomicU64,
     sender_offer: Sender<OfferEventKeyed>,
+    r_matches: Receiver<Matches>,
+    s_matches: Sender<Matches>,
 }
 
 impl OfferHandler {
     pub fn new(db: sled::Db) -> Self {
         let (s_offer, r_offer) = unbounded::<OfferEventKeyed>();
         let (s_matches, r_matches) = unbounded::<Matches>();
+        let (s_matches2, r_matches2) = unbounded::<Matches>();
 
         let mut engine = Engine::<KeyedBinaryHeapEngine>::new(r_offer, s_matches);
-        let mut persistor = MatchPersistor::new(r_matches, db.clone());
 
         let _engine_handle = thread::spawn(move || engine.start());
+        let mut persistor = MatchPersistor::new(r_matches2, db.clone());
         let _persistor_handle = thread::spawn(move || persistor.start());
 
         let mut offers_db = db.open_tree(<MatchKey as KeyOf>::PREFIX).unwrap();
@@ -32,10 +35,12 @@ impl OfferHandler {
             offers_db,
             offer_counter,
             sender_offer: s_offer,
+            s_matches: s_matches2,
+            r_matches,
         }
     }
 
-    pub async fn offer_event(&self, event: OfferEvent) -> sled::Result<()> {
+    pub fn offer_event(&self, event: OfferEvent) -> sled::Result<Matches> {
         let (key, _) = self
             .offers_db
             .insert_monotonic_atomic(&self.offer_counter, event.clone())?;
@@ -43,6 +48,13 @@ impl OfferHandler {
         self.sender_offer
             .send(OfferEventKeyed::from_event(key, event))
             .expect("Error on send offer though channel.");
-        Ok(())
+        Ok(self.r_matches.recv().unwrap())
+    }
+
+    pub fn send_matches(&self, matches: Matches) {
+        if let MatchResult::None = matches.result {
+        } else {
+            self.s_matches.send(matches).unwrap();
+        }
     }
 }

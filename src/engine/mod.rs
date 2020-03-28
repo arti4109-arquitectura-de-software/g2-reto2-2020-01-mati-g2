@@ -3,17 +3,17 @@ pub mod offer_ord;
 
 use crate::offers::{Offer, OfferEventKey, OfferEventKeyed, Side};
 use crossbeam_channel::{self, Receiver, Sender};
-
+use serde::{Serialize, Deserialize};
 pub use engine_keyedheap::KeyedBinaryHeapEngine;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum MatchResult {
     Complete,
     Partial { offer: Offer, to_substract: u64 },
     None,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Matches {
     pub result: MatchResult,
     pub completed: Vec<Offer>,
@@ -82,10 +82,7 @@ where
                         let matches = self.process_offer(offer);
                         println!("Engine {} - Match: {:?}", counter, matches);
 
-                        if let MatchResult::None = matches.result {
-                        } else {
-                            self.sender.send(matches).unwrap();
-                        }
+                        self.sender.send(matches).unwrap();
                     }
                     OfferEventKeyed::Delete(_, k) => {
                         let deleted = self.delete_offer(&k);

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct OfferEventKey(pub [u8; 8]);
 derive_monotonic_key!(OfferEventKey);
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum OfferEventRequest {
     Delete(u64),
     Add(OfferValue),
@@ -56,10 +56,16 @@ impl OfferEventKeyed {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, )]
 pub struct Offer {
     pub key: OfferEventKey,
     pub value: OfferValue,
+}
+
+impl PartialEq for Offer{
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
 }
 
 impl Offer {

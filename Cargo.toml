@@ -16,3 +16,5 @@ sled = "0.31"
 bincode = "1.2.1"
 crossbeam-channel = "0.4"
 keyed_priority_queue = "0.2"
+reqwest = {version="0.10.4", features= ["json", "cookies"]}
+futures = "0.3"
