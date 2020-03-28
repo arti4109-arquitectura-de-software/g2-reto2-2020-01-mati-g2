@@ -30,13 +30,15 @@ pub fn with_ctx(
 pub struct CtxData {
     auth_manager: AuthManager,
     offer_handler: OfferHandler,
+    test_auth: bool
 }
 
 impl CtxData {
-    pub fn new(db: sled::Db) -> Self {
+    pub fn new(db: sled::Db, test_auth: bool) -> Self {
         CtxData {
             auth_manager: AuthManager::new(db.clone(), jsonwebtoken::Validation::default()),
             offer_handler: OfferHandler::new(db),
+            test_auth
         }
     }
 }

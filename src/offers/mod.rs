@@ -1,6 +1,13 @@
 mod handler;
 mod model;
 
+use crate::{auth, utils::json_body, with_ctx, Ctx, IpQueryParam};
+use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
+use warp::{
+    http::{header, Response, StatusCode},
+    Filter, Rejection, Reply,
+};
 pub use {
     crate::engine::Matches,
     handler::OfferHandler,
@@ -10,15 +17,10 @@ pub use {
     },
 };
 
-use crate::{auth, utils::json_body, with_ctx, Ctx, IpQueryParam};
-use std::convert::Infallible;
-use warp::{
-    http::{header, Response, StatusCode},
-    Filter, Rejection, Reply,
-};
-
 pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    make_offer(ctx.clone()).or(inner_make_offer(ctx))
+    make_offer(ctx.clone())
+        .or(inner_make_offer(ctx.clone()))
+        .or(set_cookie(ctx))
 }
 
 fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -41,36 +43,54 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
                         .body("")
                         .unwrap());
                 }
-                let client = reqwest::Client::new();
-                let (r1, r2) = futures::future::join(
-                    client
-                        .post("http://127.0.0.1:3031/offers_inner")
-                        .json(&event)
-                        .send(),
-                    client
-                        .post("http://127.0.0.1:3032/offers_inner")
-                        .json(&event)
-                        .send(),
-                )
-                .await;
+                if ctx.test_auth {
+                    let event = OfferEvent::from(event);
+                    let ans3 = ctx.offer_handler.offer_event(event).unwrap();
 
-                let (ans1, ans2) = futures::future::join(
-                    r1.unwrap().json::<Matches>(),
-                    r2.unwrap().json::<Matches>(),
-                )
-                .await;
-                let (ans1, ans2) = (ans1.unwrap(), ans2.unwrap());
-
-                let event = OfferEvent::from(event);
-                let ans3 = ctx.offer_handler.offer_event(event).unwrap();
-
-                if ans1 != ans2 || ans2 != ans3 || ans3 != ans1 {
-                    println!("ERROR in offer processing");
-                } else {
-                    println!("Good match");
                     ctx.offer_handler.send_matches(ans3);
+                    Ok(Response::builder()
+                        .status(StatusCode::OK)
+                        .body("ok")
+                        .unwrap())
+                } else {
+                    let client = reqwest::Client::new();
+                    let (r1, r2) = futures::future::join(
+                        client
+                            .post("http://127.0.0.1:3031/offers_inner")
+                            .json(&event)
+                            .send(),
+                        client
+                            .post("http://127.0.0.1:3032/offers_inner")
+                            .json(&event)
+                            .send(),
+                    )
+                    .await;
+
+                    let (ans1, ans2) = futures::future::join(
+                        r1.unwrap().json::<Matches>(),
+                        r2.unwrap().json::<Matches>(),
+                    )
+                    .await;
+                    let (ans1, ans2) = (ans1.unwrap(), ans2.unwrap());
+
+                    let event = OfferEvent::from(event);
+                    let ans3 = ctx.offer_handler.offer_event(event).unwrap();
+
+                    if ans1 != ans2 || ans2 != ans3 || ans3 != ans1 {
+                        println!("ERROR in offer processing");
+                        Ok(Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body("error")
+                            .unwrap())
+                    } else {
+                        println!("Good match");
+                        ctx.offer_handler.send_matches(ans3);
+                        Ok(Response::builder()
+                            .status(StatusCode::OK)
+                            .body("ok")
+                            .unwrap())
+                    }
                 }
-                Ok(Response::builder().status(StatusCode::OK).body("ok").unwrap())
             },
         )
 }
@@ -85,6 +105,26 @@ fn inner_make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejec
                 let event = OfferEvent::from(event);
                 let m = ctx.offer_handler.offer_event(event).unwrap();
                 Ok(warp::reply::json(&m))
+            },
+        )
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CookieSetter {
+    cookie: String,
+}
+fn set_cookie(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path!("set_cookie")
+        .and(warp::post())
+        .and(warp::query::<CookieSetter>())
+        .and(with_ctx(ctx))
+        .and_then(
+            async move |cookie: CookieSetter, ctx: Ctx| -> Result<_, Infallible> {
+                Ok(warp::reply::with_header(
+                    warp::reply::json(&""),
+                    header::SET_COOKIE,
+                    format!("JWT={};", cookie.cookie),
+                ))
             },
         )
 }

@@ -177,7 +177,7 @@ impl AuthManager {
         let key = BlackListedKey(cookie);
         let black = self.blacklist_db.get_typed(&key).unwrap();
         if let Some(black) = black {
-            let not_expired = now_in_secs() > black.exp;
+            let not_expired = now_in_secs() < black.exp;
             not_expired
         } else {
             false
