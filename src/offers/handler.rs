@@ -1,6 +1,6 @@
 use crate::engine::{Engine, KeyedBinaryHeapEngine, Matches, MatchResult};
 use crate::matches::{MatchKey, MatchPersistor, };
-use crate::offers::{OfferEvent, OfferEventKeyed};
+use crate::offers::{OfferEvent, OfferEventKeyed, OfferEventKey};
 use crate::prelude::*;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::sync::atomic::AtomicU64;
@@ -8,7 +8,7 @@ use std::thread;
 
 pub struct OfferHandler {
     offers_db: sled::Tree,
-    offer_counter: AtomicU64,
+    pub offer_counter: AtomicU64,
     sender_offer: Sender<OfferEventKeyed>,
     r_matches: Receiver<Matches>,
     s_matches: Sender<Matches>,
@@ -40,15 +40,15 @@ impl OfferHandler {
         }
     }
 
-    pub fn offer_event(&self, event: OfferEvent) -> sled::Result<Matches> {
-        let (key, _) = self
+    pub fn offer_event(&self, event: OfferEvent) -> sled::Result<(OfferEventKey, Matches)> {
+        let (key, _): (OfferEventKey, _) = self
             .offers_db
             .insert_monotonic_atomic(&self.offer_counter, event.clone())?;
         println!("{:?}", event);
         self.sender_offer
-            .send(OfferEventKeyed::from_event(key, event))
+            .send(OfferEventKeyed::from_event(key.clone(), event))
             .expect("Error on send offer though channel.");
-        Ok(self.r_matches.recv().unwrap())
+        Ok((key, self.r_matches.recv().unwrap()))
     }
 
     pub fn send_matches(&self, matches: Matches) {

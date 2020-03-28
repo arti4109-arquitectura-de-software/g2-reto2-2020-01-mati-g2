@@ -43,7 +43,6 @@ impl EngineDataStruct for KeyedBinaryHeapEngine {
             };
 
             while let Some((_, o)) = self.peek() {
-                println!("${:?} {:?}$", offer, o);
                 if let Some(p) = o.price {
                     if  p > price {
                         break;

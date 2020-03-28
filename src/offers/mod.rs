@@ -9,7 +9,7 @@ use warp::{
     Filter, Rejection, Reply,
 };
 pub use {
-    crate::engine::Matches,
+    crate::engine::{MatchResult, Matches},
     handler::OfferHandler,
     model::{
         Offer, OfferEvent, OfferEventKey, OfferEventKeyed, OfferEventRequest, OfferValue, Security,
@@ -45,7 +45,7 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
                 }
                 if ctx.test_auth {
                     let event = OfferEvent::from(event);
-                    let ans3 = ctx.offer_handler.offer_event(event).unwrap();
+                    let (_, ans3) = ctx.offer_handler.offer_event(event).unwrap();
 
                     ctx.offer_handler.send_matches(ans3);
                     Ok(Response::builder()
@@ -74,7 +74,7 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
                     let (ans1, ans2) = (ans1.unwrap(), ans2.unwrap());
 
                     let event = OfferEvent::from(event);
-                    let ans3 = ctx.offer_handler.offer_event(event).unwrap();
+                    let (_, ans3) = ctx.offer_handler.offer_event(event).unwrap();
 
                     if ans1 != ans2 || ans2 != ans3 || ans3 != ans1 {
                         println!("ERROR in offer processing");
@@ -103,7 +103,18 @@ fn inner_make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejec
         .and_then(
             async move |event: OfferEventRequest, ctx: Ctx| -> Result<_, Infallible> {
                 let event = OfferEvent::from(event);
-                let m = ctx.offer_handler.offer_event(event).unwrap();
+                let (k, mut m) = ctx.offer_handler.offer_event(event).unwrap();
+
+                if let Some(error_on) = ctx.error_on {
+                    println!("key: {:?}", &k);
+                    if error_on as u64 == u64::from(k) {
+                        m.result = match m.result {
+                            MatchResult::Complete => MatchResult::None,
+                            MatchResult::None => MatchResult::Complete,
+                            MatchResult::Partial{..} => MatchResult::None,
+                        };
+                    }
+                }
                 Ok(warp::reply::json(&m))
             },
         )
