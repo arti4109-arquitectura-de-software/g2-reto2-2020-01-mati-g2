@@ -47,13 +47,7 @@ impl OfferHandler {
                     _s.remove(&m.key).unwrap()
                 };
 
-                let mut state = f.state.lock().unwrap();
-                // Signal that the timer has completed and wake up the last
-                // task on which the future was polled, if one exists.
-                state.matches = Some(m);
-                if let Some(waker) = state.waker.take() {
-                    waker.wake();
-                }
+                f.complete(m);
             }
         });
 
@@ -103,6 +97,15 @@ impl WaitMatches {
                 matches: None,
                 waker: None,
             })),
+        }
+    }
+
+    fn complete(&self, matches: Matches) {
+        let mut state = self.state.lock().unwrap();
+
+        state.matches = Some(matches);
+        if let Some(waker) = state.waker.take() {
+            waker.wake();
         }
     }
 }
