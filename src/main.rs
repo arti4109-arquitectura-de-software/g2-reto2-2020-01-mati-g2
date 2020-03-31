@@ -156,6 +156,8 @@ struct Requester {
     valid_ip: String,
 }
 
+use futures::future::{BoxFuture, FutureExt};
+
 impl Requester {
     fn new() -> Self {
         let client = reqwest::Client::builder()
@@ -172,7 +174,23 @@ impl Requester {
         }
     }
 
-    async fn signup(&mut self) {
+    async fn start(&mut self, n_requests: u32) {
+        let mut rng = rand::thread_rng();
+        for _ in 1..n_requests {
+            let index: usize = rng.gen_range(1, 3);
+            self.call_method(index).await;
+        }
+    }
+
+    fn call_method(&mut self, index: usize) -> BoxFuture<'_, ()> {
+        match index {
+            1 => self.signup().boxed(),
+            2 => self.login_wrong().boxed(),
+            _ => panic!("wrong index"),
+        }
+    }
+
+    async fn signup(&mut self) -> () {
         let user = random_user();
         let response = self
             .client
@@ -187,17 +205,17 @@ impl Requester {
         self.authorized = true;
     }
 
-    async fn login(&mut self) {
+    async fn login_wrong(&mut self) {
         let user = random_user();
         let response = self
             .client
-            .post(&format!("{}{}", SIGNUP_ROUTE, self.valid_ip))
+            .post(&format!("{}{}", LOGIN_ROUTE, self.valid_ip))
             .json(&user)
             .send()
             .await
             .unwrap();
 
-        assert_eq!(response.status(), 201);
+        assert_eq!(response.status(), 401);
         self.user_cred = Some(user);
         self.authorized = true;
     }
