@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
-    let test_auth = true;
+    let test_auth = false;
     if test_auth {
         let db = sled::Config::default().temporary(true).open().unwrap(); // sled::open("database.sled")?;
         let ctx: Ctx = Arc::new(CtxData::new(db, test_auth, None));
@@ -146,6 +146,69 @@ async fn create_offer(
         .await
         .unwrap();
     r
+}
+
+struct Requester {
+    authorized: bool,
+    client: reqwest::Client,
+    valid_cookie: Option<String>,
+    user_cred: Option<User>,
+    valid_ip: String,
+}
+
+impl Requester {
+    fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .cookie_store(true)
+            .build()
+            .unwrap();
+
+        Requester {
+            authorized: false,
+            client,
+            user_cred: None,
+            valid_cookie: None,
+            valid_ip: "d".to_string(),
+        }
+    }
+
+    async fn signup(&mut self) {
+        let user = random_user();
+        let response = self
+            .client
+            .post(&format!("{}{}", SIGNUP_ROUTE, self.valid_ip))
+            .json(&user)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 201);
+        self.user_cred = Some(user);
+        self.authorized = true;
+    }
+
+    async fn login(&mut self) {
+        let user = random_user();
+        let response = self
+            .client
+            .post(&format!("{}{}", SIGNUP_ROUTE, self.valid_ip))
+            .json(&user)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 201);
+        self.user_cred = Some(user);
+        self.authorized = true;
+    }
+}
+
+fn random_user() -> User {
+    let (id, password): (u64, u64) = rand::thread_rng().gen();
+    User {
+        id: id.to_string(),
+        password: password.to_string(),
+    }
 }
 
 async fn start_petitions_auth() {
