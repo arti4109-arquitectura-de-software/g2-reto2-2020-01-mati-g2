@@ -45,19 +45,35 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
                 }
                 if ctx.test_auth {
                     let event = OfferEvent::from(event);
-                    let ans3 = ctx.offer_handler.offer_event(event).unwrap().await;
+                    let key = ctx
+                        .offer_handler
+                        .persist_offer(event.clone())
+                        .await
+                        .unwrap();
 
+                    let event = OfferEventKeyed::from_event(key, event);
+                    let ans3 = ctx.offer_handler.send_offer(event).await;
                     ctx.offer_handler.send_matches(ans3);
                     Ok(Response::builder()
                         .status(StatusCode::OK)
                         .body("ok")
                         .unwrap())
                 } else {
+                    let event = OfferEvent::from(event);
+                    let key = ctx
+                        .offer_handler
+                        .persist_offer(event.clone())
+                        .await
+                        .unwrap();
+
+                    let event = OfferEventKeyed::from_event(key, event);
+                    let ans3 = ctx.offer_handler.send_offer(event.clone());
+
                     let client = reqwest::Client::new();
                     let (r1, r2) = futures::future::join(
                         client
                             .post("http://127.0.0.1:3031/offers_inner")
-                            .json(&event)
+                            .json(&event.clone())
                             .send(),
                         client
                             .post("http://127.0.0.1:3032/offers_inner")
@@ -66,15 +82,16 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
                     )
                     .await;
 
-                    let (ans1, ans2) = futures::future::join(
-                        r1.unwrap().json::<Matches>(),
-                        r2.unwrap().json::<Matches>(),
+                    let ((ans1, ans2), ans3) = futures::future::join(
+                        futures::future::join(
+                            r1.unwrap().json::<Matches>(),
+                            r2.unwrap().json::<Matches>(),
+                        ),
+                        ans3,
                     )
                     .await;
-                    let (ans1, ans2) = (ans1.unwrap(), ans2.unwrap());
 
-                    let event = OfferEvent::from(event);
-                    let ans3 = ctx.offer_handler.offer_event(event).unwrap().await;
+                    let (ans1, ans2) = (ans1.unwrap(), ans2.unwrap());
 
                     if ans1 != ans2 || ans2 != ans3 || ans3 != ans1 {
                         println!("ERROR in offer processing");
@@ -98,18 +115,17 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
 fn inner_make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     warp::path!("offers_inner")
         .and(warp::post())
-        .and(json_body::<OfferEventRequest>(6))
+        .and(json_body::<OfferEventKeyed>(6))
         .and(with_ctx(ctx))
         .and_then(
-            async move |event: OfferEventRequest, ctx: Ctx| -> Result<_, Infallible> {
-                let event = OfferEvent::from(event);
-                let mut m = ctx.offer_handler.offer_event(event).unwrap().await;
+            async move |event: OfferEventKeyed, ctx: Ctx| -> Result<_, Infallible> {
+                let mut m = ctx.offer_handler.send_offer(event).await;
                 if let Some(error_on) = ctx.error_on {
                     if error_on as u64 == u64::from(m.key.clone()) {
                         m.result = match m.result {
                             MatchResult::Complete => MatchResult::None,
                             MatchResult::None => MatchResult::Complete,
-                            MatchResult::Partial{..} => MatchResult::None,
+                            MatchResult::Partial { .. } => MatchResult::None,
                         };
                     }
                 }

@@ -60,21 +60,24 @@ impl OfferHandler {
         }
     }
 
-    pub fn offer_event(&self, event: OfferEvent) -> sled::Result<impl Future<Output = Matches>> {
+    pub async fn persist_offer(&self, event: OfferEvent) -> sled::Result<OfferEventKey> {
         let (key, _): (OfferEventKey, _) = self
             .offers_db
             .insert_monotonic_atomic(&self.offer_counter, event.clone())?;
-        println!("{:?}", event);
-        let f = WaitMatches::new();
+        self.offers_db.flush_async().await?;
+        Ok(key)
+    }
+
+    pub fn send_offer(&self, event: OfferEventKeyed) -> impl Future<Output = Matches> {
+        let fut = WaitMatches::new();
         {
             let mut m = self.subscriptions.lock().unwrap();
-            m.insert(key.clone(), f.clone());
+            m.insert(event.key().clone(), fut.clone());
         }
         self.sender_offer
-            .send(OfferEventKeyed::from_event(key, event))
+            .send(event)
             .expect("Error on send offer though channel.");
-
-        Ok(f)
+        fut
     }
 
     pub fn send_matches(&self, matches: Matches) {

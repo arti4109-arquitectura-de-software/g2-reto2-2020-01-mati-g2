@@ -29,7 +29,7 @@ pub enum OfferEvent {
     Add(OfferValue),
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum OfferEventKeyed {
     Delete(OfferEventKey, OfferEventKey),
     Add(Offer),
