@@ -3,8 +3,8 @@ pub mod offer_ord;
 
 use crate::offers::{Offer, OfferEventKey, OfferEventKeyed, Side};
 use crossbeam_channel::{self, Receiver, Sender};
-use serde::{Serialize, Deserialize};
 pub use engine_keyedheap::KeyedBinaryHeapEngine;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum MatchResult {
@@ -15,6 +15,7 @@ pub enum MatchResult {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Matches {
+    pub key: OfferEventKey,
     pub result: MatchResult,
     pub completed: Vec<Offer>,
 }
@@ -75,8 +76,8 @@ where
             }
             self.last_processed = Some(seq);
 
-            counter += 1;
             loop {
+                counter += 1;
                 match offer {
                     OfferEventKeyed::Add(offer) => {
                         let matches = self.process_offer(offer);
@@ -91,6 +92,7 @@ where
                 }
                 if let Some(o) = self.get_next() {
                     offer = o;
+                    self.last_processed = self.last_processed.and_then(|v| Some(v + 1));
                 } else {
                     break;
                 }
@@ -99,9 +101,6 @@ where
     }
 
     fn get_next(&mut self) -> Option<OfferEventKeyed> {
-        if let None = self.last_processed {
-            return None;
-        }
         let last_processed = self.last_processed.unwrap();
         let key = OfferEventKey((last_processed + 1).to_be_bytes());
         self.not_processed
@@ -115,6 +114,7 @@ where
         };
 
         let result = opposite_offers.match_offer(&mut self.matches, offer.clone(), same_offers);
+        let key = offer.key.clone();
         match &result {
             MatchResult::Complete => self.matches.push(offer),
             MatchResult::Partial { offer: o, .. } if o.key != offer.key => self.matches.push(offer),
@@ -122,7 +122,7 @@ where
         }
         let completed: Vec<_> = self.matches.drain(..self.matches.len()).collect();
 
-        Matches { completed, result }
+        Matches { completed, result , key}
     }
 
     pub fn delete_offer(&mut self, key: &OfferEventKey) -> bool {
