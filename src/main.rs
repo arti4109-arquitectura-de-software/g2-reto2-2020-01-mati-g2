@@ -2,23 +2,20 @@
 #![feature(async_closure)]
 
 use rand::prelude::*;
-use reqwest;
 use reto2::{
-    offers::{OfferEventRequest, OfferValue, Security, Side},
     routes,
     test_utils::{auth_test, availability_test},
-    user::User,
     Ctx, CtxData,
 };
 use std::sync::Arc;
  
 #[tokio::main]
-async fn main() {
+async fn main() {   
     let test_auth = false;
     if test_auth {
         let db = sled::Config::default().temporary(true).open().unwrap(); // sled::open("database.sled")?;
         let ctx: Ctx = Arc::new(CtxData::new(db, test_auth, None));
-        tokio::spawn(auth_test(5, 10));
+        tokio::spawn(auth_test(10, 10));
         warp::serve(routes(ctx.clone()))
             .run(([127, 0, 0, 1], 3030))
             .await;
@@ -35,7 +32,7 @@ async fn main() {
             ));
             let f = warp::serve(routes(ctx.clone())).run(([127, 0, 0, 1], 3030 + i));
             if i == 2 {
-                tokio::spawn(availability_test(5, 50));
+                tokio::spawn(availability_test(10, 10));
                 f.await;
             } else {
                 tokio::spawn(f);

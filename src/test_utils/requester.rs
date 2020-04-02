@@ -31,15 +31,15 @@ impl Requester {
     }
 
     pub async fn start_auth(mut self, n_requests: u32) {
-        for _ in 1..n_requests {
-            let index: usize = rand::thread_rng().gen_range(1, 9);
+        for _ in 0..n_requests {
+            let index: usize = rand::thread_rng().gen_range(1, 11);
             self.call_method(index).await;
         }
     }
 
     pub async fn start_availability(mut self, n_requests: u32) {
         self.signup().await;
-        for _ in 1..n_requests {
+        for _ in 0..n_requests {
             self.send_offer().await;
         }
     }
@@ -54,6 +54,8 @@ impl Requester {
             6 => self.send_offer_wrong_ip().boxed(),
             7 => self.send_offer_blacklisted().boxed(),
             8 => self.logout().boxed(),
+            9 => self.signup_created().boxed(),
+            10 => self.send_offer_not_auth().boxed(),
             _ => panic!("wrong index"),
         }
     }
@@ -72,6 +74,24 @@ impl Requester {
         self.user_cred = Some(user);
         self.authorized = true;
         self.update_valid_cookie(response);
+    }
+
+    async fn signup_created(&mut self) -> () {
+        let user = if let Some(user) = &self.user_cred {
+            user
+        } else {
+            self.signup().await;
+            self.user_cred.as_ref().unwrap()
+        };
+        let response = self
+            .client
+            .post(&format!("{}{}", SIGNUP_ROUTE, self.valid_ip))
+            .json(&user)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 417);
     }
 
     async fn login(&mut self) {
@@ -131,6 +151,9 @@ impl Requester {
     }
 
     async fn send_offer(&mut self) {
+        if !self.authorized {
+            self.login().await;
+        }
         let offer_event = random_offer();
         let r = self
             .client
@@ -139,11 +162,22 @@ impl Requester {
             .send()
             .await
             .unwrap();
+        assert_eq!(200, r.status());
+    }
+
+    async fn send_offer_not_auth(&mut self) {
         if self.authorized {
-            assert_eq!(200, r.status());
-        } else {
-            assert!(400 == r.status() || 401 == r.status());
+            self.logout().await;
         }
+        let offer_event = random_offer();
+        let r = self
+            .client
+            .post(&format!("{}{}", OFFERS_ROUTE, self.valid_ip))
+            .json(&offer_event)
+            .send()
+            .await
+            .unwrap();
+        assert!(400 == r.status() || 401 == r.status());
     }
 
     async fn send_offer_wrong_ip(&mut self) {

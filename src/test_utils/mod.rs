@@ -14,7 +14,7 @@ const SET_COOKIE_ROUTE: &str = "http://127.0.0.1:3030/set_cookie?cookie=";
 
 pub async fn auth_test(n_processes: u32, n_requests: u32) {
     std::thread::sleep(std::time::Duration::from_millis(3000));
-    let futs: Vec<BoxFuture<'_, ()>> = (1..n_processes)
+    let futs: Vec<BoxFuture<'_, ()>> = (0..n_processes)
         .map(|_| {
             let re = requester::Requester::new();
             re.start_auth(n_requests).boxed()
@@ -32,7 +32,7 @@ pub async fn auth_test(n_processes: u32, n_requests: u32) {
 pub async fn availability_test(n_processes: u32, n_requests: u32) {
     std::thread::sleep(std::time::Duration::from_millis(3000));
 
-    let futs: Vec<BoxFuture<'_, ()>> = (1..n_processes)
+    let futs: Vec<BoxFuture<'_, ()>> = (0..n_processes)
         .map(|_| {
             let re = requester::Requester::new();
             re.start_availability(n_requests).boxed()
