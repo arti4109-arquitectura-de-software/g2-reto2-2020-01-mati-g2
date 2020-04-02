@@ -2,8 +2,10 @@ mod handler;
 mod model;
 
 use crate::{auth, utils::json_body, with_ctx, Ctx, IpQueryParam};
+use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use std::sync::atomic;
 use warp::{
     http::{header, Response, StatusCode},
     Filter, Rejection, Reply,
@@ -20,7 +22,8 @@ pub use {
 pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     make_offer(ctx.clone())
         .or(inner_make_offer(ctx.clone()))
-        .or(set_cookie(ctx))
+        .or(set_cookie(ctx.clone()))
+        .or(num_errors(ctx))
 }
 
 fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -95,8 +98,16 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
 
                     if ans1 != ans2 || ans2 != ans3 || ans3 != ans1 {
                         println!("ERROR in offer processing");
+                        if ans1 != ans3 {
+                            ctx.num_errors
+                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        if ans2 != ans3 {
+                            ctx.num_errors
+                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
                         Ok(Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .status(StatusCode::OK)
                             .body("error")
                             .unwrap())
                     } else {
@@ -120,18 +131,30 @@ fn inner_make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejec
         .and_then(
             async move |event: OfferEventKeyed, ctx: Ctx| -> Result<_, Infallible> {
                 let mut m = ctx.offer_handler.send_offer(event).await;
-                if let Some(error_on) = ctx.error_on {
-                    if error_on as u64 == u64::from(m.key.clone()) {
-                        m.result = match m.result {
-                            MatchResult::Complete => MatchResult::None,
-                            MatchResult::None => MatchResult::Complete,
-                            MatchResult::Partial { .. } => MatchResult::None,
-                        };
-                    }
+                let mut r = rand::thread_rng();
+                if r.gen_bool(0.01) {
+                    ctx.num_errors
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    m.result = match m.result {
+                        MatchResult::Complete => MatchResult::None,
+                        MatchResult::None => MatchResult::Complete,
+                        MatchResult::Partial { .. } => MatchResult::None,
+                    };
                 }
                 Ok(warp::reply::json(&m))
             },
         )
+}
+
+fn num_errors(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path("num_errors")
+        .and(warp::get())
+        .and(with_ctx(ctx))
+        .and_then(async move |ctx: Ctx| -> Result<Response<_>, Infallible> {
+            Ok(Response::builder()
+                .body(ctx.num_errors.load(atomic::Ordering::SeqCst).to_string())
+                .unwrap())
+        })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -142,13 +165,11 @@ fn set_cookie(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
     warp::path!("set_cookie")
         .and(warp::post())
         .and(warp::query::<CookieSetter>())
-        .and_then(
-            async move |cookie: CookieSetter| -> Result<_, Infallible> {
-                Ok(warp::reply::with_header(
-                    warp::reply::json(&""),
-                    header::SET_COOKIE,
-                    format!("JWT={};", cookie.cookie),
-                ))
-            },
-        )
+        .and_then(async move |cookie: CookieSetter| -> Result<_, Infallible> {
+            Ok(warp::reply::with_header(
+                warp::reply::json(&""),
+                header::SET_COOKIE,
+                format!("JWT={};", cookie.cookie),
+            ))
+        })
 }

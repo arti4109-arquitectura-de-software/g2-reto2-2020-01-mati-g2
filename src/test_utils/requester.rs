@@ -30,10 +30,17 @@ impl Requester {
         }
     }
 
-    pub async fn start(mut self, n_requests: u32) {
+    pub async fn start_auth(mut self, n_requests: u32) {
         for _ in 1..n_requests {
             let index: usize = rand::thread_rng().gen_range(1, 9);
             self.call_method(index).await;
+        }
+    }
+
+    pub async fn start_availability(mut self, n_requests: u32) {
+        self.signup().await;
+        for _ in 1..n_requests {
+            self.send_offer().await;
         }
     }
 

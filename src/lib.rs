@@ -13,6 +13,7 @@ mod utils;
 use auth::AuthManager;
 use offers::OfferHandler;
 use serde::Deserialize;
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use warp::{Filter, Rejection, Reply};
 
@@ -33,6 +34,7 @@ pub struct CtxData {
     offer_handler: OfferHandler,
     test_auth: bool,
     error_on: Option<u32>,
+    num_errors: AtomicU32,
 }
 
 impl CtxData {
@@ -42,6 +44,7 @@ impl CtxData {
             offer_handler: OfferHandler::new(db),
             test_auth,
             error_on,
+            num_errors: AtomicU32::new(0),
         }
     }
 }
