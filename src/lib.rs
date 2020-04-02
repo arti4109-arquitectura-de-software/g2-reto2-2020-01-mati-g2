@@ -5,6 +5,7 @@ pub mod auth;
 mod engine;
 mod matches;
 pub mod offers;
+pub mod test_utils;
 mod typed_tree;
 pub mod user;
 mod utils;
@@ -63,7 +64,6 @@ mod tests {
     use reqwest;
     #[test]
     fn it_works() {
-        let client = reqwest::Client::new();
         assert_eq!(2 + 2, 4);
     }
 }

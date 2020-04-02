@@ -94,7 +94,7 @@ impl AuthManager {
         R: warp::Reply,
     {
         let mut start = time::Instant::now();
-        let hashed_pasword = bcrypt::hash(&user.password, 9).unwrap();
+        let hashed_pasword = bcrypt::hash(&user.password, 8).unwrap();
         println!("bcrypt: {:?}", start.elapsed());
 
         user.password = hashed_pasword;
@@ -138,6 +138,10 @@ impl AuthManager {
         } else {
             self.remove_cookie(reply)
         }
+    }
+
+    pub fn get_num_users(&self) -> usize {
+        self.user_db.len()
     }
 
     pub fn remove_cookie<R>(&self, reply: R) -> warp::reply::WithHeader<R>

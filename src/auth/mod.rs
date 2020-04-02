@@ -5,7 +5,7 @@ pub use handler::AuthManager;
 use serde::Serialize;
 use std::convert::Infallible;
 use warp::{
-    http::{header, StatusCode},
+    http::{header, Response, StatusCode},
     reply, Filter, Rejection, Reply,
 };
 
@@ -13,7 +13,20 @@ pub const JWT_COOKIE_NAME: &'static str = "JWT";
 pub const DELETE_JWT_COOKIE: &'static str = "JWT=; Max-Age=0;";
 
 pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    login(ctx.clone()).or(signup(ctx.clone())).or(logout(ctx))
+    login(ctx.clone())
+        .or(signup(ctx.clone()))
+        .or(logout(ctx.clone()))
+        .or(num_users(ctx))
+}
+
+fn num_users(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path!("num_users")
+        .and(warp::get())
+        .and(with_ctx(ctx))
+        .and_then(async move |ctx: Ctx| -> Result<Response<_>, Infallible> {
+            let num_users = ctx.auth_manager.get_num_users();
+            Ok(Response::builder().body(format!("{}", num_users)).unwrap())
+        })
 }
 
 fn login(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {

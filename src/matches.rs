@@ -78,10 +78,6 @@ impl MatchPersistor {
             }
         }
     }
-
-    pub fn persistir(&self, m: MatchValue) {
-        self.db.insert_monotonic_atomic(&self.atomic, m).unwrap() as (MatchKey, Option<_>);
-    }
 }
 
 derive_key_of!(MatchKey, MatchValue, "Match", 3);

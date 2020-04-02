@@ -6,6 +6,7 @@ use reqwest;
 use reto2::{
     offers::{OfferEventRequest, OfferValue, Security, Side},
     routes,
+    test_utils::auth_test,
     user::User,
     Ctx, CtxData,
 };
@@ -13,11 +14,11 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
-    let test_auth = false;
+    let test_auth = true;
     if test_auth {
         let db = sled::Config::default().temporary(true).open().unwrap(); // sled::open("database.sled")?;
         let ctx: Ctx = Arc::new(CtxData::new(db, test_auth, None));
-        tokio::spawn(start_petitions_auth());
+        tokio::spawn(auth_test(5, 10));
         warp::serve(routes(ctx.clone()))
             .run(([127, 0, 0, 1], 3030))
             .await;
@@ -146,204 +147,4 @@ async fn create_offer(
         .await
         .unwrap();
     r
-}
-
-struct Requester {
-    authorized: bool,
-    client: reqwest::Client,
-    valid_cookie: Option<String>,
-    user_cred: Option<User>,
-    valid_ip: String,
-}
-
-use futures::future::{BoxFuture, FutureExt};
-
-impl Requester {
-    fn new() -> Self {
-        let client = reqwest::Client::builder()
-            .cookie_store(true)
-            .build()
-            .unwrap();
-
-        Requester {
-            authorized: false,
-            client,
-            user_cred: None,
-            valid_cookie: None,
-            valid_ip: "d".to_string(),
-        }
-    }
-
-    async fn start(&mut self, n_requests: u32) {
-        let mut rng = rand::thread_rng();
-        for _ in 1..n_requests {
-            let index: usize = rng.gen_range(1, 3);
-            self.call_method(index).await;
-        }
-    }
-
-    fn call_method(&mut self, index: usize) -> BoxFuture<'_, ()> {
-        match index {
-            1 => self.signup().boxed(),
-            2 => self.login_wrong().boxed(),
-            _ => panic!("wrong index"),
-        }
-    }
-
-    async fn signup(&mut self) -> () {
-        let user = random_user();
-        let response = self
-            .client
-            .post(&format!("{}{}", SIGNUP_ROUTE, self.valid_ip))
-            .json(&user)
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), 201);
-        self.user_cred = Some(user);
-        self.authorized = true;
-    }
-
-    async fn login_wrong(&mut self) {
-        let user = random_user();
-        let response = self
-            .client
-            .post(&format!("{}{}", LOGIN_ROUTE, self.valid_ip))
-            .json(&user)
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), 401);
-        self.user_cred = Some(user);
-        self.authorized = true;
-    }
-}
-
-fn random_user() -> User {
-    let (id, password): (u64, u64) = rand::thread_rng().gen();
-    User {
-        id: id.to_string(),
-        password: password.to_string(),
-    }
-}
-
-async fn start_petitions_auth() {
-    std::thread::sleep(std::time::Duration::from_millis(3000));
-    let ip1 = "1";
-    let user1 = User {
-        id: "user1".to_string(),
-        password: "user1".to_string(),
-    };
-    let ip2 = "2";
-    let user2 = User {
-        id: "user2".to_string(),
-        password: "user2".to_string(),
-    };
-    let offer_event = OfferEventRequest::Add(OfferValue {
-        security: Security::BTC,
-        side: Side::Buy,
-        amount: 8,
-        price: Some(5),
-    });
-
-    let client = reqwest::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
-
-    // Sign up
-    let r = client
-        .post(&format!("{}{}", SIGNUP_ROUTE, ip1))
-        .json(&user1)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 201);
-
-    // Get valid cookie
-    let valid_cookie = r.cookies().next().unwrap();
-    let valid_cookie = if valid_cookie.name() == "JWT" {
-        valid_cookie.value()
-    } else {
-        panic!("Wrong cookie");
-    };
-
-    // Ok
-    let r = client
-        .post(&format!("{}{}", OFFERS_ROUTE, ip1))
-        .json(&offer_event)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(200, r.status());
-
-    // Log out
-    let r = client.post(LOGOUT_ROUTE).send().await.unwrap();
-    assert_eq!(200, r.status());
-
-    // Logged out
-    let r = client
-        .post(&format!("{}{}", OFFERS_ROUTE, ip1))
-        .json(&offer_event)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(400, r.status());
-
-    // Set valid cookie
-    let r = client
-        .post(&format!("{}{}", SET_COOKIE_ROUTE, valid_cookie))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(200, r.status());
-
-    // Black listed
-    let r = client
-        .post(&format!("{}{}", OFFERS_ROUTE, ip1))
-        .json(&offer_event)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(401, r.status());
-
-    // Log in
-    let r = client
-        .post(&format!("{}{}", LOGIN_ROUTE, ip1))
-        .json(&user1)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 200);
-
-    // Wrong ip
-    let r = client
-        .post(&format!("{}{}", OFFERS_ROUTE, ip2))
-        .json(&offer_event)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 401);
-
-    // Log in unregistered
-    let r = client
-        .post(&format!("{}{}", LOGIN_ROUTE, ip1))
-        .json(&user2)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 401);
-
-    // Log in wrong password
-    let mut user1_mod = user1.clone();
-    user1_mod.password = "nn".to_string();
-    let r = client
-        .post(&format!("{}{}", LOGIN_ROUTE, ip1))
-        .json(&user1_mod)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 401);
 }

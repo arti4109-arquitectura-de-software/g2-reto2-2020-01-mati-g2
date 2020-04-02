@@ -2,8 +2,7 @@ use crate::engine::{Engine, KeyedBinaryHeapEngine, MatchResult, Matches};
 use crate::matches::{MatchKey, MatchPersistor};
 use crate::offers::{OfferEvent, OfferEventKey, OfferEventKeyed};
 use crate::prelude::*;
-use crossbeam_channel::{unbounded, Receiver, Sender};
-use futures::future::FutureExt;
+use crossbeam_channel::{unbounded, Sender};
 use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, thread};
 use std::{

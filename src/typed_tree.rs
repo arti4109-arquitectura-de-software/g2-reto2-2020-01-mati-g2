@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use sled::IVec;
 use std::convert::TryFrom;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 #[derive(Deserialize, Serialize)]
 pub struct KeyVal<K>

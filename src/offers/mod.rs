@@ -142,9 +142,8 @@ fn set_cookie(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
     warp::path!("set_cookie")
         .and(warp::post())
         .and(warp::query::<CookieSetter>())
-        .and(with_ctx(ctx))
         .and_then(
-            async move |cookie: CookieSetter, ctx: Ctx| -> Result<_, Infallible> {
+            async move |cookie: CookieSetter| -> Result<_, Infallible> {
                 Ok(warp::reply::with_header(
                     warp::reply::json(&""),
                     header::SET_COOKIE,
