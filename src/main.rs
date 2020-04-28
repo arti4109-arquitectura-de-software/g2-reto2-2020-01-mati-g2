@@ -4,18 +4,24 @@
 use rand::prelude::*;
 use reto2::{
     routes,
-    test_utils::{auth_test, availability_test},
+    test_utils::{auth_test, availability_test, flexibility_test},
     Ctx, CtxData,
 };
 use std::sync::Arc;
- 
+
 #[tokio::main]
-async fn main() {   
-    let test_auth = false;
+async fn main() {
+    let test_auth = true;
+    let test_flexibility = true;
+    
     if test_auth {
         let db = sled::Config::default().temporary(true).open().unwrap(); // sled::open("database.sled")?;
         let ctx: Ctx = Arc::new(CtxData::new(db, test_auth, None));
-        tokio::spawn(auth_test(10, 10));
+        if test_flexibility {
+            tokio::spawn(flexibility_test(10, 50));
+        } else {
+            tokio::spawn(auth_test(10, 10));
+        }
         warp::serve(routes(ctx.clone()))
             .run(([127, 0, 0, 1], 3030))
             .await;
@@ -40,6 +46,3 @@ async fn main() {
         }
     }
 }
-
-
-

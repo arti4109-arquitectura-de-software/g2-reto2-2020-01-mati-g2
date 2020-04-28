@@ -2,6 +2,7 @@
 #![feature(vec_remove_item)]
 
 pub mod auth;
+pub mod deserializer;
 mod engine;
 mod matches;
 pub mod offers;
@@ -14,7 +15,7 @@ use auth::AuthManager;
 use offers::OfferHandler;
 use serde::Deserialize;
 use std::sync::atomic::AtomicU32;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use warp::{Filter, Rejection, Reply};
 
 pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -29,12 +30,15 @@ pub fn with_ctx(
     warp::any().map(move || ctx.clone())
 }
 
+const WASM_PATH: &str = r"C:\Users\jmanu\Desktop\rust\wapc-guest\target\wasm32-unknown-unknown\release\wapc_guest_test.wasm";
+
 pub struct CtxData {
     auth_manager: AuthManager,
     offer_handler: OfferHandler,
     test_auth: bool,
     error_on: Option<u32>,
     num_errors: AtomicU32,
+    deserializer: deserializer::FormatDeserializer,
 }
 
 impl CtxData {
@@ -45,6 +49,7 @@ impl CtxData {
             test_auth,
             error_on,
             num_errors: AtomicU32::new(0),
+            deserializer: deserializer::FormatDeserializer::new(WASM_PATH).unwrap(),
         }
     }
 }

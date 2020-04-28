@@ -1,9 +1,14 @@
 mod handler;
 
-use crate::{user::User, utils::json_body, with_ctx, Ctx, IpQueryParam};
+use crate::{
+    user::User,
+    utils::{bytes_body, json_body},
+    with_ctx, Ctx, IpQueryParam,
+};
 pub use handler::AuthManager;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::convert::Infallible;
+use std::time::Instant;
 use warp::{
     http::{header, Response, StatusCode},
     reply, Filter, Rejection, Reply,
@@ -16,7 +21,7 @@ pub fn routes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
     login(ctx.clone())
         .or(signup(ctx.clone()))
         .or(logout(ctx.clone()))
-        .or(num_users(ctx))
+        .or(num_users(ctx.clone())).or(config_bytes(ctx.clone())).or(config_path(ctx))
 }
 
 fn num_users(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -27,6 +32,49 @@ fn num_users(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> +
             let num_users = ctx.auth_manager.get_num_users();
             Ok(Response::builder().body(format!("{}", num_users)).unwrap())
         })
+}
+
+fn config_bytes(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path!("config")
+        .and(warp::post())
+        .and(warp::body::bytes())
+        .and(with_ctx(ctx))
+        .and_then(
+            async move |body: bytes::Bytes, ctx: Ctx| -> Result<Response<_>, Infallible> {
+                let instant = Instant::now();
+                let num_users = ctx.deserializer.replace(&body.to_vec());
+                let duration = instant.elapsed();
+
+                Ok(Response::builder()
+                    .body(format!("{}", duration.as_millis()))
+                    .unwrap())
+            },
+        )
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct PathBody {
+   pub  path: String,
+}
+
+fn config_path(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path!("config_path")
+        .and(warp::post())
+        .and(json_body::<PathBody>(4))
+        .and(with_ctx(ctx))
+        .and_then(
+            async move |body: PathBody, ctx: Ctx| -> Result<Response<_>, Infallible> {
+                let module_bytes = std::fs::read(&body.path).unwrap();
+                let instant = Instant::now();
+                ctx.deserializer.replace(&module_bytes);
+                let duration = instant.elapsed();
+                println!("Ended Load ////////////// {} - {}", &body.path, duration.as_secs());
+
+                Ok(Response::builder()
+                    .body(format!("{}", duration.as_millis()))
+                    .unwrap())
+            },
+        )
 }
 
 fn login(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {

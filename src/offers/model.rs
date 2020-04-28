@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct OfferEventKey(pub [u8; 8]);
 derive_monotonic_key!(OfferEventKey);
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum OfferEventRequest {
     Delete(u64),
     Add(OfferValue),
@@ -77,7 +77,7 @@ impl Offer {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct OfferValue {
     pub security: Security,
     pub side: Side,
@@ -85,7 +85,7 @@ pub struct OfferValue {
     pub price: Option<u64>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Security {
     BTC,
     USD,

@@ -1,10 +1,54 @@
 use super::*;
 use crate::{
+    auth::PathBody,
     offers::{OfferEventRequest, OfferValue, Security, Side},
     user::User,
 };
 use futures::future::{BoxFuture, FutureExt};
 use rand::prelude::*;
+use warp::http::header;
+
+use rmp_serde as serde_msg_pack;
+use serde_cbor;
+use serde_json;
+
+#[derive(Clone, Copy)]
+pub enum SerType {
+    Cbor,
+    Json,
+    MsgPack,
+}
+
+impl SerType {
+    fn header(&self) -> &'static str {
+        match self {
+            SerType::Cbor => "cbor",
+            SerType::Json => "json",
+            SerType::MsgPack => "message_pack",
+        }
+    }
+
+    // fn from_header(header: &str) -> Self {
+    //     match header {
+    //         "cbor" => SerType::Cbor,
+    //         "json" => SerType::Json,
+    //         "message_pack" => SerType::MsgPack,
+    //         _ => panic!("wrong header {}", header),
+    //     }
+    // }
+}
+
+fn message_pack_format(msg: &OfferEventRequest) -> Vec<u8> {
+    serde_msg_pack::to_vec(msg).unwrap()
+}
+
+fn cbor_format(msg: &OfferEventRequest) -> Vec<u8> {
+    serde_cbor::to_vec(msg).unwrap()
+}
+
+fn json_format(msg: &OfferEventRequest) -> Vec<u8> {
+    serde_json::to_vec(msg).unwrap()
+}
 
 pub struct Requester {
     authorized: bool,
@@ -12,10 +56,11 @@ pub struct Requester {
     valid_cookie: Option<String>,
     user_cred: Option<User>,
     valid_ip: String,
+    ser_type: SerType,
 }
 
 impl Requester {
-    pub fn new() -> Self {
+    pub fn new(ser_type: Option<SerType>) -> Self {
         let client = reqwest::Client::builder()
             .cookie_store(true)
             .build()
@@ -27,6 +72,7 @@ impl Requester {
             user_cred: None,
             valid_cookie: None,
             valid_ip: "d".to_string(),
+            ser_type: ser_type.unwrap_or(SerType::Json),
         }
     }
 
@@ -44,6 +90,13 @@ impl Requester {
         }
     }
 
+    pub async fn start_flexibility(mut self, n_requests: u32) {
+        self.signup().await;
+        for _ in 0..n_requests {
+            self.send_offer_ser(None).await;
+        }
+    }
+
     fn call_method(&mut self, index: usize) -> BoxFuture<'_, ()> {
         match index {
             1 => self.signup().boxed(),
@@ -58,6 +111,22 @@ impl Requester {
             10 => self.send_offer_not_auth().boxed(),
             _ => panic!("wrong index"),
         }
+    }
+
+    pub async fn config_path(&mut self, path: &str) -> u64 {
+        let resp: Response = self
+            .client
+            .post(CONFIG_PATH_ROUTE)
+            .json(&PathBody {
+                path: path.to_string(),
+            })
+            .send()
+            .await
+            .unwrap();
+        let b = resp.bytes().await.unwrap().to_vec();
+        let millis = std::str::from_utf8(&b).unwrap();
+        println!("millis {}", millis);
+        millis.parse::<u64>().unwrap()
     }
 
     async fn signup(&mut self) -> () {
@@ -163,6 +232,35 @@ impl Requester {
             .await
             .unwrap();
         assert_eq!(200, r.status());
+    }
+
+    pub async fn send_offer_ser(&mut self, t: Option<SerType>) {
+        if !self.authorized {
+            self.login().await;
+        }
+        let offer_event = random_offer();
+        let _t = t.unwrap_or(self.ser_type);
+        let b = match _t {
+            SerType::Cbor => cbor_format(&offer_event),
+            SerType::Json => json_format(&offer_event),
+            SerType::MsgPack => message_pack_format(&offer_event),
+        };
+        let r: reqwest::Response = self
+            .client
+            .post(&format!("{}{}", OFFERS_ROUTE, self.valid_ip))
+            .body(b)
+            .header(header::CONTENT_TYPE, _t.header())
+            .send()
+            .await
+            .unwrap();
+
+        if t.is_some() {
+            assert_eq!(400, r.status());
+        } else {
+            assert_eq!(200, r.status());
+            let offer_response = r.json::<OfferEventRequest>().await.unwrap();
+            assert_eq!(offer_event, offer_response);
+        }
     }
 
     async fn send_offer_not_auth(&mut self) {

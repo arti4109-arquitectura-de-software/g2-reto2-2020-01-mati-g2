@@ -13,10 +13,25 @@ tokio = { version = "0.2", features = ["macros"] }
 warp = "0.2"
 bcrypt = "0.6"
 sled = "0.31"
-bincode = "1.2.1"
 crossbeam-channel = "0.4"
 keyed_priority_queue = "0.2"
 reqwest = {version="0.10.4", features= ["json", "cookies"]}
 futures = "0.3"
 rand = "0.7.3"
 rand_distr = "0.2.2"
+
+bytes = "0.5.4"
+
+wascc-host = "0.7" 
+wapc = "0.7"
+
+# Apache Avro
+avro-rs = "0.8" 
+# Message Pack
+rmp-serde = "0.14.3"
+# CBOR - Concise Binary Object Representation
+serde_cbor = "0.11.1"
+# Mozilla Bincode
+bincode = "1.2.1"
+# JSON
+serde_json = "1.0"

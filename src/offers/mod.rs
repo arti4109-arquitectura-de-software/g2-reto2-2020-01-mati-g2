@@ -1,7 +1,11 @@
 mod handler;
 mod model;
 
-use crate::{auth, utils::json_body, with_ctx, Ctx, IpQueryParam};
+use crate::{
+    auth,
+    utils::{bytes_body, json_body},
+    with_ctx, Ctx, IpQueryParam,
+};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -31,23 +35,39 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
         .and(warp::post())
         .and(warp::cookie(auth::JWT_COOKIE_NAME))
         .and(warp::query::<IpQueryParam>())
-        .and(json_body::<OfferEventRequest>(6))
+        .and(warp::header::<String>(header::CONTENT_TYPE.as_str()))
+        .and(bytes_body(6))
         .and(with_ctx(ctx))
         .and_then(
             async move |cookie: String,
                         ip: IpQueryParam,
-                        event: OfferEventRequest,
+                        content_type: String,
+                        event: bytes::Bytes,
                         ctx: Ctx|
                         -> Result<Response<_>, Infallible> {
                 if let Err(_e) = ctx.auth_manager.authorize(ip.ip.as_str(), cookie.as_str()) {
                     return Ok(Response::builder()
                         .status(StatusCode::UNAUTHORIZED)
                         .header(header::SET_COOKIE, auth::DELETE_JWT_COOKIE)
-                        .body("")
+                        .body("".into())
                         .unwrap());
                 }
+                let event_raw = match ctx.deserializer.deserialize(&content_type, &event.to_vec()) {
+                    Ok(v) => v,
+                    Err(e) => match ctx.deserializer.deserialize(&content_type, &event.to_vec()) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            println!("content_type {} - error {}", content_type, e);
+                            return Ok(Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body("".into())
+                                .unwrap());
+                        }
+                    },
+                };
+
                 if ctx.test_auth {
-                    let event = OfferEvent::from(event);
+                    let event = OfferEvent::from(event_raw.clone());
                     let key = ctx
                         .offer_handler
                         .persist_offer(event.clone())
@@ -59,10 +79,10 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
                     ctx.offer_handler.send_matches(ans3);
                     Ok(Response::builder()
                         .status(StatusCode::OK)
-                        .body("ok")
+                        .body(serde_json::ser::to_string(&event_raw).unwrap())
                         .unwrap())
                 } else {
-                    let event = OfferEvent::from(event);
+                    let event = OfferEvent::from(event_raw);
                     let key = ctx
                         .offer_handler
                         .persist_offer(event.clone())
@@ -108,14 +128,14 @@ fn make_offer(ctx: Ctx) -> impl Filter<Extract = impl Reply, Error = Rejection> 
                         }
                         Ok(Response::builder()
                             .status(StatusCode::OK)
-                            .body("error")
+                            .body("error".into())
                             .unwrap())
                     } else {
                         println!("Good match");
                         ctx.offer_handler.send_matches(ans3);
                         Ok(Response::builder()
                             .status(StatusCode::OK)
-                            .body("ok")
+                            .body("ok".into())
                             .unwrap())
                     }
                 }

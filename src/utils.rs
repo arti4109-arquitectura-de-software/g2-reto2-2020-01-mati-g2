@@ -44,6 +44,13 @@ where
     warp::body::content_length_limit(1024 * kb_limit).and(warp::body::json())
 }
 
+pub fn bytes_body(kb_limit: u64) -> impl Filter<Extract = (bytes::Bytes,), Error = warp::Rejection> + Clone
+{
+    // When accepting a body, we want a JSON body
+    // (and to reject huge payloads )...
+    warp::body::content_length_limit(1024 * kb_limit).and(warp::body::bytes())
+}
+
 #[macro_export]
 macro_rules! bincode_ser {
     ($val: expr ) => {
